@@ -1,0 +1,273 @@
+---
+title: "Analysis of bulk RNA-sequencing of TN10 participant samples"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load libraries, mask functions, set theme and directory
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(readxl)
+library(knitr)
+library(survival)
+library(survminer)
+
+options(stringsAsFactors = FALSE)
+set.seed(42)
+
+`%notin%` <- Negate(`%in%`)
+select <- dplyr::select
+rename <- dplyr::rename
+filter <- dplyr::filter
+distinct <- dplyr::distinct
+mutate <- dplyr::mutate
+
+theme_set(
+  theme_bw(20) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour="black", fill = NA, size = 1),
+          axis.text = element_text(colour="black"),
+          axis.ticks = element_line(colour="black"),
+          axis.text.x = element_text(angle=0),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 7)))
+
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/TN10_BULK_RNA/")
+
+```
+
+# NEED TO SHOW HOW DATA WAS CLEANED
+
+# Read in TN10 whole blood data
+
+```{r}
+
+counts_data <- readRDS("./saved_data/whole_blood_tn10_counts_data_cleaned.rds")
+metadata <- read.csv("./saved_data/whole_blood_tn10_metadata_cleaned.csv") %>%
+  select(libid, treatment_arm, visit, t1d_event, age, months_to_t1d, masked_id) %>%
+  filter(visit != "prn") %>%
+  # extend censoring time
+  mutate(months_to_t1d = ifelse(is.na(months_to_t1d), max(months_to_t1d, na.rm = TRUE) + 1, months_to_t1d))
+masked_ids <- metadata %>%
+  group_by(masked_id) %>%
+  dplyr::slice(1) %>%
+  select(-visit, -libid)
+
+```
+
+# Stratify participants by baseline whole blood transcript levels of a public MAIT module or KLRB1 to compare T1D-free intervals (figure 2E)
+
+```{r}
+
+meta_base <- metadata %>%
+  filter(visit == "baseline")
+mait_genes <- unique(c(
+  "LEF1", "CCR7", "ZFP36L2", "ZFP", "DUSP2", "ARL4C", "B4GALT1", "CACNA2D2", "CACNA2D4", 
+  "COLA3", "DENND3", "DUSP5", "FOSL2", "MAFF", "MAP3K8", "PLEKHG3", "PRDM1", "RHBDF2", 
+  "TLE1", "VCL", "SLC4A10", "LTK", "TBC1D4", "KLRB1", "ITK", "FYB", "MIAT", "ABCB1", 
+  "ACTN4", "ADRB2", "CXCR6", "ERN1", "FAM43A", "GBP5", "GPR65", "GZMA", "GZMK", "IFI44", 
+  "IL18R1", "IL18RAP", "IL23R", "KLRG1", "LAG3", "MAP3K5", "ME1", "MYO1F", "NPC1", 
+  "PHACTR2", "PLXNC1", "PRF1", "RORA", "SIPA1L2", "SLAMF1", "SYNE2", "SYTL2", "TNFSF14", 
+  "ZBTB16"
+))
+# compute MAIT module score (mean expression per library)
+mait_expr <- counts_data[rownames(counts_data) %in% mait_genes, , drop = FALSE]
+mait_score <- colMeans(mait_expr)
+km_df_mait <- meta_base %>%
+  left_join(
+    tibble(libid = names(mait_score),
+           module_expression = mait_score),
+    by = "libid"
+  )
+km_df_mait <- km_df_mait %>%
+  mutate(
+    strata = case_when(
+      treatment_arm == "placebo" ~ "Placebo",
+      treatment_arm == "teplizumab" &
+        module_expression >= quantile(
+          module_expression[treatment_arm == "teplizumab"],
+          probs = 2/3, na.rm = TRUE
+        ) ~ "Top1/3",
+      treatment_arm == "teplizumab" ~ "Bottom2/3"
+    )
+  )
+km_df_mait$strata <- factor(
+  km_df_mait$strata,
+  levels = c("Top1/3", "Bottom2/3", "Placebo")
+)
+surv_obj <- survfit(
+  Surv(months_to_t1d, t1d_event) ~ strata,
+  data = km_df_mait
+)
+fig2E_left <- ggsurvplot(
+  fit = surv_obj,
+  data = km_df_mait,
+  palette = c("#FF0000", "#FF0001", "grey"),
+  linetype = c("solid", "dotted", "solid"),
+  risk.table = TRUE,
+  xlab = "Months",
+  ylab = "% T1D Free",
+  ylim = c(0, 100),
+  fun = function(x) x * 100,
+  break.time.by = 12,
+  risk.table.height = 0.35,
+  surv.plot.height  = 0.65,
+  risk.table.fontsize = 5,
+  tables.theme = theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    axis.text  = element_text(size = 20),
+    axis.title = element_text(size = 24)
+  ) +
+    theme(
+      axis.text  = element_text(size = 20),
+      axis.title = element_text(size = 24)
+    )
+)
+fig2E_left
+pdf("./figures/fig2E_left.pdf", width = 4, height = 5)
+print(fig2E_left)
+dev.off()
+# stats
+p_top <- {
+  df <- km_df_mait %>% filter(strata %in% c("Placebo", "Top1/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+p_bot <- {
+  df <- km_df_mait %>% filter(strata %in% c("Placebo", "Bottom2/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+tibble(
+  comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
+  logrank_p = c(p_top, p_bot)
+)
+
+# compute KLRB1 levels per library
+klrb1_score <- counts_data["KLRB1", ]
+km_df_klrb1 <- meta_base %>%
+  left_join(
+    tibble(libid = names(klrb1_score),
+           module_expression = klrb1_score),
+    by = "libid"
+  )
+km_df_klrb1 <- km_df_klrb1 %>%
+  mutate(
+    strata = case_when(
+      treatment_arm == "placebo" ~ "Placebo",
+      treatment_arm == "teplizumab" &
+        module_expression >= quantile(
+          module_expression[treatment_arm == "teplizumab"],
+          probs = 2/3, na.rm = TRUE
+        ) ~ "Top1/3",
+      treatment_arm == "teplizumab" ~ "Bottom2/3"
+    )
+  )
+km_df_klrb1$strata <- factor(
+  km_df_klrb1$strata,
+  levels = c("Top1/3", "Bottom2/3", "Placebo")
+)
+surv_obj <- survfit(
+  Surv(months_to_t1d, t1d_event) ~ strata,
+  data = km_df_klrb1
+)
+fig2E_right <- ggsurvplot(
+  fit = surv_obj,
+  data = km_df_klrb1,
+  palette = c("#0000FF", "#0000FE", "grey"),
+  linetype = c("solid", "dotted", "solid"),
+  risk.table = TRUE,
+  xlab = "Months",
+  ylab = "% T1D Free",
+  ylim = c(0, 100),
+  fun = function(x) x * 100,
+  break.time.by = 12,
+  risk.table.height = 0.35,
+  surv.plot.height  = 0.65,
+  risk.table.fontsize = 5,
+  tables.theme = theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    axis.text  = element_text(size = 20),
+    axis.title = element_text(size = 24)
+  ) +
+    theme(
+      axis.text  = element_text(size = 20),
+      axis.title = element_text(size = 24)
+    )
+)
+fig2E_right
+pdf("./figures/fig2E_right.pdf", width = 4, height = 5)
+print(fig2E_right)
+dev.off()
+# stats
+p_top <- {
+  df <- km_df_klrb1 %>% filter(strata %in% c("Placebo", "Top1/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+p_bot <- {
+  df <- km_df_klrb1 %>% filter(strata %in% c("Placebo", "Bottom2/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+tibble(
+  comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
+  logrank_p = c(p_top, p_bot)
+)
+
+```
+
+# Plot baseline KLRB1 expression vs. age and vs. baseline SKIM %
+
+```{r}
+
+gene_data <- counts_data["KLRB1", ]
+data_with_meta <- merge(
+    metadata, 
+    data.frame(libid = names(gene_data), klrb1 = gene_data), 
+    by = "libid"
+)
+skim_perc <- read_xlsx("./raw_data/tex_split_by_baseline_ime.xlsx") %>%
+  rename(time_to_disease = `Time to Disease`,
+         treatment_arm = `Treatment Arm`,
+         masked_id = `Masked ID`,
+         baseline_dp = `Baseline DP`,
+         three_months_dp = `3 months DP`,
+         six_months_dp = `6 months DP`,
+         eighteen_months_dp = `18 months DP`,
+         baseline_ime = `Baseline IME`,
+         three_months_ime = `3 months IME`,
+         six_months_ime = `6 months IME`,
+         eighteen_months_ime = `18 months IME`)
+data_with_meta_with_skim_perc <- data_with_meta %>%
+  filter(visit == "baseline") %>%
+  mutate(treatment_arm = case_when(
+    treatment_arm == "teplizumab" ~ "Teplizumab",
+    treatment_arm == "placebo" ~ "Placebo")) %>%
+  left_join(skim_perc, by = c("masked_id", "treatment_arm")) %>%
+  filter(treatment_arm == "Teplizumab")
+supp_fig_5A <- ggplot(data_with_meta_with_skim_perc, aes(x = baseline_ime, y = klrb1)) +
+  geom_point(size = 2) +
+  geom_smooth(aes(color = NULL), method = "lm", se = FALSE) + 
+  stat_cor(method = "pearson", 
+           label.x.npc = "left", 
+           label.y.npc = "top") +
+  labs(x = "Baseline SKIM (% CD8)",
+       y = "Baseline KLRB1\ntranscript level",
+       color = "Treatment",
+       shape = "T1D Event")
+supp_fig_5A
+ggsave("./figures/supp_fig_5A.pdf", supp_fig_5A, width = 5, height = 4)
+
+```
