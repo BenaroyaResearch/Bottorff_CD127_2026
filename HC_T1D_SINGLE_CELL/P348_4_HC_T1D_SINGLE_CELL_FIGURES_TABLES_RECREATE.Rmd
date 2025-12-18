@@ -1,0 +1,746 @@
+---
+title: "P348_4 HC & T1D Single Cell"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load necessary libraries, mask functions, set paths, set ggplot theme
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ComplexHeatmap)
+library(circlize)
+library(knitr)
+library(stringr)
+library(ggrepel)
+library(tidyr)
+library(igraph)
+
+options(stringsAsFactors = FALSE)
+set.seed(42)
+
+`%notin%` <- Negate(`%in%`)
+
+select   <- dplyr::select
+rename   <- dplyr::rename
+filter   <- dplyr::filter
+distinct <- dplyr::distinct
+mutate   <- dplyr::mutate
+
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/SINGLE_CELL")
+
+theme_minimal_white <- theme_bw(base_size = 14) + 
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(color = "black", size = 12),
+    axis.text = element_text(color = "black"),
+    axis.ticks = element_line(color = "black"),
+    legend.background = element_rect(fill = "white", color = NA)
+  )
+theme_set(theme_minimal_white)
+
+```
+
+# NEED TO FILL IN HOW CLUSTERED_CORRECTED_WO_VDJ WAS MADE (COPY FROM BASILIN'S CODE?)
+# Load for now until above filled in
+```{r}
+
+load("./saved_data/data10x_P348_4_norm_clusterd_corrected_wo_vdj.RData")
+
+```
+
+# Cluster cells by expression of selected surface proteins
+
+```{r}
+
+adt_markers_of_int <- c("CD27", "CD45RA", "CD45RO", "CD127 (IL-7R&#945;)","CD57 Recombinant","CD279","TIGIT (VSTM3)","KLRG1 (MAFA)")
+
+DefaultAssay(data10x_P348_4_norm_clusterd_corrected_wo_vdj) <- "ADT"
+
+# duplicate object, subsect ADT layer
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- data10x_P348_4_norm_clusterd_corrected_wo_vdj
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT[["ADT"]] <- subset(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT[["ADT"]], features = adt_markers_of_int)
+
+# normalize, find features, scale, cluster
+DefaultAssay(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT) <- "ADT"
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- NormalizeData(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, normalization.method = 'CLR')
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- FindVariableFeatures(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, selection.method = "vst")
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- ScaleData(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- RunPCA(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, features = VariableFeatures(object = data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- FindNeighbors(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, dims = 1:7)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- FindClusters(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, resolution = c(0.4))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT <- RunUMAP(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, dims = 1:7)
+
+# choose cluster numbers
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT) <- "ADT_snn_res.0.4"
+old_idents <- Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT)
+new_idents <- as.character(old_idents)
+new_idents[old_idents == "5"] <- "4"
+new_idents[old_idents == "1"] <- "2"
+new_idents[old_idents == "3"] <- "3"
+new_idents[old_idents == "4"] <- "1"
+new_idents[old_idents == "0"] <- "8"
+new_idents[old_idents == "6"] <- "6"
+new_idents[old_idents == "2"] <- "7"
+new_idents[old_idents == "7"] <- "5"
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT) <- factor(new_idents, levels = sort(unique(new_idents)))
+
+```
+
+# Display heatmap of clusters' average expression of selected surface proteins (figure 2A)
+
+```{r}
+
+avg_expr <- AverageExpression(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT,
+  layer = "scale.data"
+)$ADT
+# clean up row and column names
+avg_expr_mat <- as.matrix(avg_expr)
+rownames(avg_expr_mat) <- gsub(" .*", "", rownames(avg_expr_mat))   # e.g., "CD127 (IL-7Rα)" → "CD127"
+colnames(avg_expr_mat) <- gsub("^g", "", colnames(avg_expr_mat))    # e.g., "g1" → "1"
+# count number of cells per cluster
+cluster_ids <- Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT)
+cluster_sizes <- table(cluster_ids)
+names(cluster_sizes) <- gsub("^g", "", names(cluster_sizes))
+cluster_size_vector <- cluster_sizes[colnames(avg_expr_mat)]
+cluster_bar_colors <- setNames(
+  c("#302583", "#37773C", "#D9CB81", "#BF6E7A", "#95CAE9", "#61A899", "#9E4C95", "#7D2B54"),
+  names(cluster_size_vector)
+)
+right_annotation <- rowAnnotation(
+  "Cluster (C)\nsize\n(# cells)" = anno_barplot(
+    matrix(cluster_size_vector, ncol = 1),
+    bar_width = 0.8,
+    gp = gpar(fill = cluster_bar_colors),
+    border = FALSE
+  ),
+  annotation_name_side = "bottom"
+)
+fig2A <- pseudobulked_clustered_heatmap <- Heatmap(
+  t(avg_expr_mat),
+  name = "Z-score\nExpression",
+  col = colorRamp2(c(-2, 0, 2), c("#45094e", "#b68b4d", "#fdf180")),
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  right_annotation = right_annotation,
+  show_row_dend = FALSE,
+  show_column_dend = FALSE,
+  column_names_gp = gpar(fontsize = 10),
+  row_names_gp = gpar(fontsize = 10),
+  row_order = c("1", "2", "3", "4", "5", "6", "7", "8"),
+  column_order = c("CD45RA", "CD45RO", "CD127", "CD57", "CD279", "TIGIT", "KLRG1", "CD27"),
+  border = TRUE
+  )
+
+fig2A
+
+pdf("./figures/fig2A.pdf", width = 3, height = 2.5)
+draw(pseudobulked_clustered_heatmap, heatmap_legend_side = "left")
+dev.off()
+
+```
+
+# Look globally at all surface proteins' expression
+
+```{r}
+
+DefaultAssay(data10x_P348_4_norm_clusterd_corrected_wo_vdj) <- "ADT"
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- FindVariableFeatures(data10x_P348_4_norm_clusterd_corrected_wo_vdj, selection.method = "vst", nfeatures = 2000)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- ScaleData(data10x_P348_4_norm_clusterd_corrected_wo_vdj)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- RunPCA(data10x_P348_4_norm_clusterd_corrected_wo_vdj, features = VariableFeatures(object = data10x_P348_4_norm_clusterd_corrected_wo_vdj))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- FindNeighbors(data10x_P348_4_norm_clusterd_corrected_wo_vdj, dims = 1:7)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- FindClusters(data10x_P348_4_norm_clusterd_corrected_wo_vdj)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- RunUMAP(data10x_P348_4_norm_clusterd_corrected_wo_vdj, dims = 1:7)
+DefaultAssay(data10x_P348_4_norm_clusterd_corrected_wo_vdj) <- "RNA"
+
+# assign cluster numbers again
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT$ADT_cluster <- 
+  as.character(Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT$ADT_cluster <- 
+  factor(
+    data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT$ADT_cluster,
+    levels = sort(unique(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT$ADT_cluster))
+  )
+data10x_P348_4_norm_clusterd_corrected_wo_vdj$ADT_cluster <- 
+  as.character(Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj$ADT_cluster <- 
+  factor(
+    data10x_P348_4_norm_clusterd_corrected_wo_vdj$ADT_cluster,
+    levels = sort(unique(data10x_P348_4_norm_clusterd_corrected_wo_vdj$ADT_cluster))
+  )
+
+```
+
+# Find differentially expressed transcripts and surface proteins between SKIM and non-SKIM (figure 2B)
+
+```{r}
+
+cluster_8_barcodes <- data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data %>%
+  filter(ADT_cluster == 8) %>%
+  pull(cellBarcode)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj@meta.data$cluster_8_status <- ifelse(data10x_P348_4_norm_clusterd_corrected_wo_vdj@meta.data$cellBarcode %in% cluster_8_barcodes,
+  "cluster-8",
+  "not-cluster-8"
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_pseudobulk <- AggregateExpression(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj,
+  assays = "ADT", 
+  return.seurat = TRUE,
+  group.by = c("sample_id", "cluster_8_status")
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_pseudobulk$cluster_8_status <- factor(data10x_P348_4_norm_clusterd_corrected_wo_vdj_pseudobulk$cluster_8_status, levels = c("cluster-8", "not-cluster-8"))
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_pseudobulk) <- "cluster_8_status"
+pseudobulk_degs <- FindMarkers(
+  object = data10x_P348_4_norm_clusterd_corrected_wo_vdj_pseudobulk,
+  ident.1 = "cluster-8",
+  ident.2 = "not-cluster-8",
+  assay = "ADT",
+  test.use = "MAST",
+  latent.vars = "sample_id"
+)
+pseudobulk_degs$gene <- rownames(pseudobulk_degs)
+volcano_df <- pseudobulk_degs %>%
+  mutate(
+    gene = case_when(
+      str_detect(gene, "^TCR") ~ "TCR Vα7.2",
+      TRUE ~ word(gene, 1)  # keep only the first word otherwise
+    ),
+    label_gene = ifelse(p_val_adj < 0.05 & abs(avg_log2FC) > 1, gene, NA))
+
+volcano_df$significance <- with(volcano_df, ifelse(p_val_adj < 0.05 & avg_log2FC > 0, "Up in SKIM",
+                                    ifelse(p_val_adj < 0.05 & avg_log2FC < 0, "Down in SKIM", "NS")))
+volcano_df_adt <- volcano_df %>%
+  mutate(modality = "surface proteins")
+# RNA layer now
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data$cluster_8_status <- ifelse(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data$cellBarcode %in% cluster_8_barcodes,
+  "cluster-8",
+  "not-cluster-8"
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk <- AggregateExpression(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT,
+  assays = "RNA", 
+  return.seurat = TRUE,
+  group.by = c("sample_id", "cluster_8_status")
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj@meta.data$cluster_8_status <- ifelse(data10x_P348_4_norm_clusterd_corrected_wo_vdj@meta.data$cellBarcode %in% cluster_8_barcodes,
+  "cluster-8",
+  "not-cluster-8"
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk$cluster_8_status <- factor(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk$cluster_8_status, levels = c("cluster-8", "not-cluster-8"))
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk) <- "cluster_8_status"
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk)
+pseudobulk_degs <- FindMarkers(
+  object = data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_pseudobulk,
+  ident.1 = "cluster-8",
+  ident.2 = "not-cluster-8",
+  assay = "RNA",
+  test.use = "DESeq2"
+)
+pseudobulk_degs$gene <- rownames(pseudobulk_degs)
+volcano_df <- pseudobulk_degs %>%
+  mutate(label_gene = ifelse(p_val_adj < 0.05 & abs(avg_log2FC) > 1, gene, NA))
+volcano_df$significance <- with(volcano_df, ifelse(p_val_adj < 0.05 & avg_log2FC > 0, "Up in SKIM",
+                                    ifelse(p_val_adj < 0.05 & avg_log2FC < 0, "Down in SKIM", "NS")))
+volcano_df_rna <- volcano_df %>%
+  mutate(modality = "transcripts")
+volcano_df <- bind_rows(volcano_df_adt, volcano_df_rna)
+fig2B <- ggplot(volcano_df %>% filter(!(is.na(significance))), aes(x = avg_log2FC, y = -log10(p_val_adj), color = significance)) +
+  geom_point(size = 1.25, alpha = 0.75) +
+  geom_text_repel(aes(label = label_gene), size = 6, na.rm = TRUE, max.overlaps = 4) +
+  scale_color_manual(values = c("Up in SKIM" = "#7D2B54", "Down in SKIM" = "black", "NS" = "grey")) +
+  labs(
+    x = "Log2 Fold Change",
+    y = "-Log10 adjusted\np-value",
+    color = "Significance"
+  ) +
+  facet_wrap(~ modality, scales = "free") +
+  #geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
+  #geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 14),
+        legend.key = element_blank()) +  # Remove the key (color boxes)
+  guides(color = guide_legend(override.aes = list(size = 2)))  # Ensure that only color legend is shown
+
+fig2B
+
+ggsave("./figures/fig2B.pdf", width = 8.4, height = 3.25)
+
+```
+
+# Bring in TCRseq data
+
+```{r}
+
+tcrs <- read.csv("./raw_data/P348-4_aggr_vdj_filtered_contig_annotations.csv") %>%
+  # filter for cells with no more than 1 alpha or beta chain (<= 1 each)
+  group_by(barcode, chain) %>%
+  mutate(per_cell_chain_count = n()) %>% 
+  filter(per_cell_chain_count == 1) %>%
+  ungroup() %>%
+  group_by(barcode) %>% 
+  mutate(TRA_TRB_pair = n()) %>% 
+  filter(TRA_TRB_pair == 2) %>%
+  ungroup() %>%
+  rename(cellBarcode = barcode,
+         studyGroup = Meta.studyGroup) %>%
+  pivot_wider(id_cols = c(cellBarcode, studyGroup), names_from = "chain", values_from = c("v_gene", "d_gene", "j_gene", "c_gene", "cdr3", "cdr3_nt"))
+adt_tcr_joined_data <- data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data %>%
+  # subset for cells in both scRNAseq and scTCRseq (inner_join)
+  inner_join(tcrs, by = c("cellBarcode", "studyGroup"))
+
+```
+
+# Plot TCRvalpha7.2+ (%) by cluster (figure 2C)
+
+```{r}
+
+mait_perc_plot_df <- adt_tcr_joined_data %>%
+  select(cellBarcode, sampleID, studyGroup, ADT_cluster, v_gene_TRA, j_gene_TRA) %>%
+  group_by(ADT_cluster, sampleID) %>%
+  summarize(
+    # sum cells with identifiable v/j genes for TRA
+    total_cells_with_info = sum(!is.na(v_gene_TRA) & !is.na(j_gene_TRA)),
+    MAIT_cells = sum(v_gene_TRA == "TRAV1-2" & j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20"))) %>%
+  mutate(
+    MAIT_percentage = (MAIT_cells / total_cells_with_info) * 100,
+    cluster_proportion = total_cells_with_info / sum(total_cells_with_info),
+    weighted_MAIT_contribution = MAIT_percentage * cluster_proportion
+  )
+fig2C <- ggplot(mait_perc_plot_df, aes(x = as.factor(ADT_cluster), y = MAIT_percentage, fill = as.factor(ADT_cluster))) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_fill_manual(
+    values = c(
+      "1" = "#302583",
+      "2" = "#37773C",
+      "3" = "#D9CB81",
+      "4" = "#BF6E7A",
+      "5" = "#95CAE9",
+      "6" = "#61A899",
+      "7" = "#9E4C95",
+      "8" = "#7D2B54"
+    )) +
+  geom_jitter(size = 1) +
+  labs(
+    x = "Cluster",
+    y = "TCRvalpha7.2+ (%)",
+    fill = "Cluster"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
+        legend.position = "none") +
+  ylim(0, 100)
+fig2C
+ggsave("./figures/fig2C.pdf", width = 4, height = 2.75)
+
+```
+
+# Find differentially expressed transcripts and surface proteins between non-MAIT SKIM and non-SKIM (figure 2D)
+
+```{r}
+
+# subset for TCRseq-containing data in cluster 8
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_with_tcr_data_cluster_8 <- subset(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, subset = cellBarcode %in% tcrs$cellBarcode & ADT_cluster == 8)
+# define MAIT cells as those with alpha chains expressing TRAV1-2 and one of the following: TRAJ12, TRAJ20, or TRAJ33
+maits_cells <- tcrs %>%
+  filter(v_gene_TRA == "TRAV1-2" & j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20")) %>%
+  pull(cellBarcode)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_with_tcr_data_cluster_8@meta.data$mait_status <- ifelse(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_with_tcr_data_cluster_8@meta.data$cellBarcode %in% maits_cells,
+  "MAIT",
+  "not-MAIT"
+)
+cluster_8_mait_or_tcr_neg_barcodes <- data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data %>%
+  filter(ADT_cluster == 8,
+         cellBarcode %in% maits_cells | !(cellBarcode %in% tcrs$cellBarcode)) %>%
+  pull(cellBarcode)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits <- subset(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT, subset = !(cellBarcode %in% cluster_8_mait_or_tcr_neg_barcodes))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits_pseudobulk <- AggregateExpression(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits,
+  assays = "RNA", 
+  return.seurat = TRUE,
+  group.by = c("sample_id", "cluster_8_status")
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits_pseudobulk$cluster_8_status <- factor(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits_pseudobulk$cluster_8_status, levels = c("cluster-8", "not-cluster-8"))
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits_pseudobulk) <- "cluster_8_status"
+pseudobulk_degs <- FindMarkers(
+  object = data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT_no_cluster_8_maits_pseudobulk,
+  ident.1 = "cluster-8",
+  ident.2 = "not-cluster-8",
+  assay = "RNA",
+  test.use = "DESeq2"
+)
+pseudobulk_degs$gene <- rownames(pseudobulk_degs)
+volcano_df <- pseudobulk_degs %>%
+  mutate(label_gene = ifelse(p_val_adj < 0.05 & abs(avg_log2FC) > 1, gene, NA))
+
+volcano_df$significance <- with(volcano_df, ifelse(p_val_adj < 0.05 & avg_log2FC > 0, "Up in SKIM\nnon-MAITs",
+                                    ifelse(p_val_adj < 0.05 & avg_log2FC < 0, "Down in SKIM\nnon-MAITs", "NS")))
+volcano_df_rna <- volcano_df %>%
+  mutate(modality = "transcripts")
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits <- subset(data10x_P348_4_norm_clusterd_corrected_wo_vdj, subset = !(cellBarcode %in% cluster_8_mait_or_tcr_neg_barcodes))
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits_pseudobulk <- AggregateExpression(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits,
+  assays = "ADT", 
+  return.seurat = TRUE,
+  group.by = c("sample_id", "cluster_8_status")
+)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits_pseudobulk$cluster_8_status <- factor(data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits_pseudobulk$cluster_8_status, levels = c("cluster-8", "not-cluster-8"))
+Idents(data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits_pseudobulk) <- "cluster_8_status"
+pseudobulk_degs <- FindMarkers(
+  object = data10x_P348_4_norm_clusterd_corrected_wo_vdj_no_cluster_8_maits_pseudobulk,
+  ident.1 = "cluster-8",
+  ident.2 = "not-cluster-8",
+  assay = "ADT",
+  test.use = "MAST"
+)
+pseudobulk_degs$gene <- rownames(pseudobulk_degs)
+volcano_df <- pseudobulk_degs %>%
+  mutate(
+    gene = case_when(
+      str_detect(gene, "^TCR") ~ "TCR Vα7.2",
+      TRUE ~ word(gene, 1)  # keep only the first word otherwise
+    ),
+    label_gene = ifelse(p_val_adj < 0.05 & abs(avg_log2FC) > 1, gene, NA))
+
+volcano_df$significance <- with(volcano_df, ifelse(p_val_adj < 0.05 & avg_log2FC > 0, "Up in SKIM\nnon-MAITs",
+                                    ifelse(p_val_adj < 0.05 & avg_log2FC < 0, "Down in SKIM\nnon-MAITs", "NS")))
+volcano_df_adt <- volcano_df %>%
+  mutate(modality = "surface proteins")
+volcano_df <- bind_rows(volcano_df_adt, volcano_df_rna)
+fig2D <- ggplot(volcano_df %>% filter(!(is.na(significance))), aes(x = avg_log2FC, y = -log10(p_val_adj), color = significance)) +
+  geom_point(size = 1.25, alpha = 0.75) +
+  geom_text_repel(aes(label = label_gene), size = 4.5, na.rm = TRUE, max.overlaps = Inf) +
+  scale_color_manual(values = c("Up in SKIM\nnon-MAITs" = "#7D2B54", "Down in SKIM\nnon-MAITs" = "black", "NS" = "grey")) +
+  labs(
+    x = "Log2 Fold Change",
+    y = "-Log10 adjusted\np-value",
+    color = "Significance"
+  ) +
+  facet_wrap(~ modality, scales = "free") +
+  #geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
+  #geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.key = element_blank(),
+        axis.text.x = element_text(size = 11),
+        axis.text.y = element_text(size = 11),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        strip.text = element_text(size = 14)) +  # Remove the key (color boxes)
+  guides(color = guide_legend(override.aes = list(size = 2)))  # Ensure that only color legend is shown
+
+fig2D
+
+ggsave("./figures/fig2D.pdf", width = 6.4, height = 2.4)
+
+```
+
+# Calculate Jaccard similarities between clusters' TCR repertoires (figure 7D)
+
+```{r}
+
+# The Jaccard similarity index = number observations in both sets / number observations in either set (so intersection / union)
+clonotype_df <- adt_tcr_joined_data %>%
+  mutate(mait_status = case_when(
+   v_gene_TRA == "TRAV1-2" & j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20") ~ "MAIT",
+   is.na(v_gene_TRA) | is.na(j_gene_TRA) ~ "unidentifiable",
+   !is.na(v_gene_TRA) & v_gene_TRA != "TRAV1-2" | !is.na(j_gene_TRA) & !(j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20")) ~ "not MAIT"
+  )) %>%
+  mutate(clonotype = paste(v_gene_TRA, j_gene_TRA, cdr3_nt_TRA, v_gene_TRB, j_gene_TRB, cdr3_nt_TRB, sep = "_")) %>%
+  select(cellBarcode, sampleID, ADT_cluster, clonotype, mait_status, v_gene_TRA, j_gene_TRA)
+# downsample clusters so each has same number of TCRs
+set.seed(123)
+tcr_counts <- clonotype_df %>%
+  group_by(ADT_cluster) %>%
+  summarize(n = n())
+min_tcrs <- min(tcr_counts$n)
+clonotype_df <- clonotype_df %>%
+  group_by(ADT_cluster) %>%
+  slice_sample(n = min_tcrs) %>%
+  ungroup()
+# define function to calculate Jaccard index
+calculate_jaccard_similarity <- function(df, cluster_col, clonotype_col, cluster1, cluster2) {
+  cluster1_data <- df[df[[cluster_col]] == cluster1, ]
+  cluster2_data <- df[df[[cluster_col]] == cluster2, ]
+  clonotypes_cluster1 <- unique(cluster1_data[[clonotype_col]])
+  clonotypes_cluster2 <- unique(cluster2_data[[clonotype_col]])
+  intersection <- length(intersect(clonotypes_cluster1, clonotypes_cluster2))
+  union <- length(union(clonotypes_cluster1, clonotypes_cluster2))
+  jaccard_index <- intersection / union
+  return(jaccard_index)
+}
+# calculate Jaccard indices across all cluster comparisons
+calculate_pairwise_jaccard <- function(df, cluster_col, clonotype_col) {
+  clusters <- unique(df[[cluster_col]])
+  jaccard_matrix <- matrix(0, nrow = length(clusters), ncol = length(clusters))
+  rownames(jaccard_matrix) <- clusters
+  colnames(jaccard_matrix) <- clusters
+  for (i in 1:length(clusters)) {
+    for (j in i:length(clusters)) {
+      jaccard_value <- calculate_jaccard_similarity(df, cluster_col, clonotype_col, clusters[i], clusters[j])
+      jaccard_matrix[i, j] <- jaccard_value
+      jaccard_matrix[j, i] <- jaccard_value
+    }
+  }
+  return(jaccard_matrix)
+}
+jaccard_matrix <- calculate_pairwise_jaccard(clonotype_df, "ADT_cluster", "clonotype")
+new_order <- c("4", "1", "2", "3", "5", "6", "7", "8")
+jaccard_matrix <- jaccard_matrix[new_order, new_order]
+jaccard_matrix[upper.tri(jaccard_matrix, diag = TRUE)] <- NA
+# scale color
+max_jaccard_value <- max(jaccard_matrix, na.rm = TRUE)
+col_fun <- colorRamp2(c(0, max_jaccard_value), c("white", "#6A0DAD"))
+fig7D <- Heatmap(
+    jaccard_matrix,
+    name = "TCR repertoire overlap",
+    col = col_fun,
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    row_dend_side = "left",
+    column_dend_side = "top",
+    show_row_dend = FALSE,
+    show_column_dend = FALSE,
+    row_names_side = "left",
+    column_names_side = "top",
+    na_col = "grey")
+
+fig7D
+
+pdf("./figures/fig7D.pdf", width = 5, height = 3)
+draw(fig7D)
+dev.off()
+
+```
+
+# Combine clusters 5-7 and summarize sharing in a node summary (figure 7E)
+ - scale nodes by the number of rare mitochondrial variants
+
+```{r}
+
+clonotype_df <- adt_tcr_joined_data %>%
+  mutate(mait_status = case_when(
+   v_gene_TRA == "TRAV1-2" & j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20") ~ "MAIT",
+   is.na(v_gene_TRA) | is.na(j_gene_TRA) ~ "unidentifiable",
+   !is.na(v_gene_TRA) & v_gene_TRA != "TRAV1-2" | !is.na(j_gene_TRA) & !(j_gene_TRA %in% c("TRAJ33", "TRAJ12", "TRAJ20")) ~ "not MAIT"
+  )) %>%
+  mutate(clonotype = paste(v_gene_TRA, j_gene_TRA, cdr3_nt_TRA, v_gene_TRB, j_gene_TRB, cdr3_nt_TRB, sep = "_")) %>%
+  select(cellBarcode, sampleID, ADT_cluster, clonotype, mait_status, v_gene_TRA, j_gene_TRA)
+# downsample clusters so each has same number of TCRs
+set.seed(123)
+tcr_counts <- clonotype_df %>%
+  group_by(ADT_cluster) %>%
+  summarize(n = n())
+min_tcrs <- min(tcr_counts$n)
+clonotype_df <- clonotype_df %>%
+  group_by(ADT_cluster) %>%
+  slice_sample(n = min_tcrs) %>%
+  ungroup()
+calculate_pairwise_jaccard <- function(df, cluster_col, clonotype_col) {
+  clusters <- unique(df[[cluster_col]])
+  jaccard_matrix <- matrix(0, nrow = length(clusters), ncol = length(clusters))
+  rownames(jaccard_matrix) <- clusters
+  colnames(jaccard_matrix) <- clusters
+  for (i in 1:length(clusters)) {
+    for (j in i:length(clusters)) {
+      jaccard_value <- calculate_jaccard_similarity(df, cluster_col, clonotype_col, clusters[i], clusters[j])
+      jaccard_matrix[i, j] <- jaccard_value
+      jaccard_matrix[j, i] <- jaccard_value
+    }
+  }
+  return(jaccard_matrix)
+}
+jaccard_matrix <- calculate_pairwise_jaccard(clonotype_df, "ADT_cluster", "clonotype")
+# create mapping for cluster collapse
+cluster_map <- c("1"="1", "2"="2", "3"="3", "4"="4", "5"="x", "6"="x", "7"="x", "8"="8")
+jaccard_collapsed <- matrix(NA, nrow=6, ncol=6)
+rownames(jaccard_collapsed) <- colnames(jaccard_collapsed) <- c("1", "2", "3", "4", "x", "8")
+unique_clusters <- rownames(jaccard_collapsed)
+for (i in unique_clusters) {
+  for (j in unique_clusters) {
+    # Find original cluster labels that map to these
+    rows_i <- names(cluster_map)[cluster_map == i]
+    cols_j <- names(cluster_map)[cluster_map == j]
+
+    # Extract relevant submatrix and compute mean (excluding NAs)
+    sub_values <- jaccard_matrix[rows_i, cols_j]
+    jaccard_collapsed[i, j] <- mean(sub_values, na.rm = TRUE)
+  }
+}
+jaccard_long <- as.data.frame(as.table(jaccard_collapsed)) %>%
+  rename(from = Var1, to = Var2, jaccard = Freq) %>%
+  mutate(from = as.character(from), to = as.character(to))
+# get between-cluster edges
+jaccard_between <- jaccard_long %>%
+  filter(from != to) %>%
+  mutate(key = paste(pmin(from, to), pmax(from, to), sep = "-")) %>%
+  distinct(key, .keep_all = TRUE)
+# count number of repeated clonotypes per cluster
+tcr_expansion <- clonotype_df %>%
+  mutate(ADT_cluster = case_when(
+    ADT_cluster %in% c("5", "6", "7") ~ "x",
+    TRUE ~ ADT_cluster
+  )) %>%
+  group_by(ADT_cluster, clonotype) %>%
+  filter(n() > 1) %>%
+  summarise(n_repeats = n(), .groups = "drop") %>%
+  group_by(ADT_cluster) %>%
+  summarise(expansion_score = sum(n_repeats), .groups = "drop") %>%
+  rename(from = ADT_cluster)
+self_edges <- tcr_expansion %>%
+  mutate(to = from, jaccard = NA) %>%
+  select(from, to, jaccard, expansion_score)
+# for between-cluster edges, jaccard drives edge width
+edges_between <- jaccard_between %>%
+  select(from, to, jaccard) %>%
+  mutate(expansion_score = NA)
+# for self-loops, expansion_score drives width
+edges_self <- self_edges
+# combine edge list
+edges_final <- bind_rows(edges_between, edges_self)
+match_TCR_donor_all_cluster_donor_tcr_count <- clonotype_df %>%
+  mutate(ADT_cluster = case_when(
+    ADT_cluster %in% c("5", "6", "7") ~ "x",
+    TRUE ~ ADT_cluster
+  )) %>%
+  group_by(cluster = ADT_cluster, sampleID, clonotype) %>%
+  summarise(n_cells = n()) %>%
+  filter(n_cells > 1) %>%
+  group_by(cluster) %>%
+  summarise(number_cells_with_tcr = sum(n_cells), .groups = "drop") %>%
+  rename(from = cluster)
+vertices <- match_TCR_donor_all_cluster_donor_tcr_count %>%
+  mutate(from = as.character(from)) %>%
+  distinct(from, number_cells_with_tcr) %>%
+  rename(name = from)
+network_graph <- graph_from_data_frame(
+  d = edges_final,
+  vertices = vertices,
+  directed = FALSE
+)
+cluster_pal <- c(
+  "1" = "#302583",
+  "2" = "#37773C",
+  "3" = "#D9CB81",
+  "4" = "#BF6E7A",
+  "x" = "grey",
+  "8" = "#7D2B54"
+)
+V(network_graph)$color <- cluster_pal[V(network_graph)$name]
+# scale nodes by the number of rare mitochondrial variants, when possible (otherwise use 8)
+V(network_graph)$size <- c(18.8, 12, 8, 4.29, 8, 5.33)*2
+eps <- 1e-6
+E(network_graph)$width <- ifelse(
+  is.na(E(network_graph)$expansion_score),
+  scales::rescale(E(network_graph)$jaccard + eps, to = c(0.5, 8)),
+  scales::rescale(E(network_graph)$expansion_score + eps, to = c(0.5, 8))
+)
+E(network_graph)$curved <- ifelse(
+  ends(network_graph, E(network_graph))[,1] == ends(network_graph, E(network_graph))[,2],
+  0.2,
+  0.05
+)
+n_nodes <- vcount(network_graph)
+grid_layout <- matrix(nrow = n_nodes, ncol = 2)
+grid_layout[,1] <- rep(1:3, length.out = n_nodes) * 1
+grid_layout[,2] <- rep(1:3, each = ceiling(n_nodes / 3))[1:n_nodes] * 1
+grid_layout <- grid_layout * 0.6
+x_range <- range(grid_layout[,1])
+y_range <- range(grid_layout[,2])
+x_padding <- diff(x_range) * 0.5
+y_padding <- diff(y_range) * 0.5
+pdf("./figures/fig7C.pdf", width = 8, height = 8)
+plot(
+  network_graph,
+  layout = grid_layout,
+  rescale = FALSE,
+  xlim = x_range + c(-x_padding, x_padding),
+  ylim = y_range + c(-y_padding, y_padding),
+  vertex.label.font = 2,
+  vertex.label.color = "black",
+  vertex.label.cex = 1.5,
+  edge.color = "black"
+)
+dev.off()
+
+```
+
+# Plot TCRvalpha7.2+ and % cluster 8 vs. age (supplementary figure 4B)
+
+```{r}
+
+mait_by_patient <- adt_tcr_joined_data %>%
+  select(sampleID, v_gene_TRA, j_gene_TRA) %>%
+  group_by(sampleID) %>%
+  summarise(
+    total_cells = sum(!is.na(v_gene_TRA) & !is.na(j_gene_TRA)),
+    MAIT_cells  = sum(v_gene_TRA == "TRAV1-2" &
+                        j_gene_TRA %in% c("TRAJ33","TRAJ12","TRAJ20")),
+    MAIT_percentage = 100 * MAIT_cells / total_cells,
+    .groups = "drop"
+  )
+mait_age <- read.csv("./raw_data/p348_4_ageatdraw.csv") %>%
+  rename(sampleID = X) %>%
+  select(sampleID, age_at_draw) %>%
+  mutate(sampleID = as.character(sampleID)) %>%
+  left_join(mait_by_patient, by = "sampleID")
+mait_age <- mait_age %>%
+  mutate(
+    age_group = if_else(age_at_draw < 30, "<30", ">=30"),
+    marker = "TCRvalpha7.2+ (%)",
+    value = MAIT_percentage
+  )
+lm_lt30 <- lm(MAIT_percentage ~ age_at_draw,
+              data = subset(mait_age, age_group == "<30"))
+lm_ge30 <- lm(MAIT_percentage ~ age_at_draw,
+              data = subset(mait_age, age_group == ">=30"))
+summary(lm_lt30)
+summary(lm_ge30)
+
+skim_by_patient <- adt_tcr_joined_data %>%
+  select(sampleID, ADT_cluster) %>%
+  group_by(sampleID, ADT_cluster) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(perc = 100 * n / sum(n)) %>%
+  ungroup() %>%
+  filter(ADT_cluster == "8") %>%
+  select(sampleID, perc_cluster_8 = perc)
+skim_age_by_patient <- read.csv("./raw_data/p348_4_ageatdraw.csv") %>%
+  rename(sampleID = X) %>%
+  select(sampleID, age_at_draw) %>%
+  mutate(sampleID = as.character(sampleID)) %>%
+  left_join(skim_by_patient, by = "sampleID")
+skim_age_by_patient <- skim_age_by_patient %>%
+  mutate(age_group = if_else(age_at_draw < 30, "<30", ">=30"),
+         marker = "SKIM (% cluster 8)",
+         value = perc_cluster_8)
+lm_lt30 <- lm(perc_cluster_8 ~ age_at_draw,
+              data = subset(skim_age_by_patient, age_group == "<30"))
+lm_ge30 <- lm(perc_cluster_8 ~ age_at_draw,
+              data = subset(skim_age_by_patient, age_group == ">=30"))
+summary(lm_lt30)
+summary(lm_ge30)
+ggplot(skim_age_by_patient, aes(x = age_at_draw, y = perc_cluster_8)) +
+  geom_point(size = 2) +
+  geom_smooth(aes(group = age_group), method = "lm", se = FALSE, color = "black") +
+  labs(y = "% SKIM (% cluster 8)", x = "Age")
+combined <- bind_rows(mait_age, skim_age_by_patient)
+supp_fig_4B <- ggplot(combined, aes(x = age_at_draw, y = value)) +
+  geom_point(aes(color = sampleID), size = 2) +
+  geom_smooth(aes(group = age_group), method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~marker, scales = "free_y") +
+  labs(x = "Age", color = "Donor ID", y = "Value")
+supp_fig_4B
+ggsave("./figures/supp_fig_4B.pdf", p, width = 7, height = 3)
+
+```

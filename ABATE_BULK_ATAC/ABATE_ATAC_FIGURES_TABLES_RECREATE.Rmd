@@ -1,0 +1,439 @@
+---
+title: "Analysis of bulk ATAC-sequencing of non-naive CD8s from AbATE"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load necessary libraries
+
+```{r}
+
+ibrary(dplyr)
+library(tidyr)
+library(readr)
+library(readxl)
+library(ggplot2)
+library(ggthemes)
+library(ggbeeswarm)
+library(viridis)
+library(stringr)
+library(kableExtra)
+library(RColorBrewer)
+library(ggrepel)
+library(ggpubr)
+library(plotly)
+library(GenomicRanges)
+library(GenomicAlignments)
+library(EnsDb.Hsapiens.v86)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(ChIPpeakAnno)
+library(DiffBind)
+library(ATACseqQC)
+library(soGGi)
+library(chromVAR)
+library(SummarizedExperiment)
+library(edgeR)
+library(limma)
+library(statmod)
+
+theme_set(
+  theme_bw(20) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour="black", fill = NA, size = 1),
+          axis.text = element_text(colour="black"),
+          axis.ticks = element_line(colour="black"),
+          axis.text.x = element_text(angle=0),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 7)))
+
+pcutoff = 0.1
+logPcutoff = -log10(pcutoff)
+logFCcutoff = 0
+
+
+```
+
+# Compare open chromatin between CD127+ Tex and CD127- Tex, export differential peaks for HOMER analyses (figure 6B)
+
+```{r}
+
+peakFileName = "./saved_data/P576-1_DP_CD127_pos_vs_DP_CD127_neg_diffbind_object.rds"
+design_DP_CD127_pos_vs_DP_CD127_neg = design %>% filter(sort %in% c("TIGIT+KLRG1+\nCD57-CD127+", "TIGIT+KLRG1+\nCD57+CD127-", "TIGIT+KLRG1+\nCD57-CD127-PD1+")) %>% mutate(CD127_status = if_else(sort == "TIGIT+KLRG1+\nCD57-CD127+", "positive", "negative"))
+# add a replicate index column (required by diffBind)
+design_DP_CD127_pos_vs_DP_CD127_neg <- 
+  design_DP_CD127_pos_vs_DP_CD127_neg %>%
+  group_by(responder, sort) %>%
+  mutate(replicate = row_number()) %>%
+  ungroup() %>%
+  # fix contrast
+  mutate(sort = gsub("\\+", "pos", sort),
+         sort = gsub("\\-", "neg", sort))
+if (file.exists(peakFileName)) {
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = readRDS(peakFileName)
+} else {
+  samples = data.frame(SampleID = design_DP_CD127_pos_vs_DP_CD127_neg$sample_name, 
+                       Tissue = design_DP_CD127_pos_vs_DP_CD127_neg$sort,
+                       Condition = design_DP_CD127_pos_vs_DP_CD127_neg$responder, 
+                       Treatment = design_DP_CD127_pos_vs_DP_CD127_neg$CD127_status, 
+                       Replicate = design_DP_CD127_pos_vs_DP_CD127_neg$replicate, 
+                       Donor = design_DP_CD127_pos_vs_DP_CD127_neg$donorId,
+                       bamReads = design_DP_CD127_pos_vs_DP_CD127_neg$bamFile, 
+                       Peaks = design_DP_CD127_pos_vs_DP_CD127_neg$peakFiles, 
+                       PeakCaller = "narrow")
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = dba(sampleSheet=samples)
+  summary(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg$binding[,3]-consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg$binding[,2])
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = dba.count(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, peaks = "/Users/tybottorff/mounts/pipeline/Illumina/240327_VH00126_344_AACHGGFHV/Project_P576-1Processed_bri_240401/merged_peaks/all_merged_peaks.bed", summits = T)
+  dba.plotPCA(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, attributes = c(DBA_TREATMENT, DBA_TISSUE, DBA_CONDITION))
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = dba.contrast(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, categories=DBA_TREATMENT, block = c(DBA_REPLICATE, DBA_CONDITION, DBA_TISSUE), reorderMeta = list(Treatment = "positive"))
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = dba.normalize(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, method=DBA_ALL_METHODS, library=DBA_LIBSIZE_FULL, normalize=DBA_NORM_LIB, background=FALSE)
+  consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg = dba.analyze(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, method = DBA_ALL_METHODS)
+    # PCA of differentially accessible regions
+  dba.plotPCA(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, contrast = 1, attributes = c(DBA_TREATMENT, DBA_TISSUE, DBA_CONDITION))
+  dba.show(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, bContrast=T)
+  dba.plotVolcano(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, contrast=1)
+  saveRDS(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, file = pathToDataFile)
+}
+annoData <- ChIPpeakAnno::toGRanges(EnsDb.Hsapiens.v86, feature="gene")
+annoData = annoData[seqnames(annoData) %in% paste0("chr",c(1:23,"X","Y"))]
+ucsc.levels <- paste0("chr",c(1:23,"X","Y"))
+seqlevels(annoData) <- ucsc.levels
+seqlevelsStyle(annoData) <- "NCBI"
+consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg = dba.peakset(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, bRetrieve=T, DataType = DBA_DATA_FRAME)
+filterChr = c(1:23, "X", "Y")
+bed = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg %>% dplyr::filter(START >= 0, CHR %in% filterChr) %>% dplyr::select(CHR, START, END)
+consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg$peakID = 1:nrow(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg)
+consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g = GRanges(seqnames = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg$CHR, 
+                                 IRanges(start = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg$START, 
+                                         end = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg$END), 
+                                 strand = "*", 
+                                 peakID = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg$peakID)
+seqlevelsStyle(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g) = "UCSC"
+seqlevels(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g)
+consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g[seqnames(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g) %in% paste0("chr",c(1:23,"X","Y"))]
+seqlevels(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g) <- ucsc.levels
+seqlevelsStyle(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g) <- "NCBI"
+seqlevels(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g)
+# first annotate the closest gene bodies (one to one)
+geneBodies.g <- ChIPpeakAnno::annotatePeakInBatch(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g, 
+                                                  AnnotationData = annoData, 
+                                                  output = "nearestLocation",
+                                                  select = "first")
+geneBodies.g = ChIPpeakAnno::addGeneIDs(geneBodies.g, orgAnn="org.Hs.eg.db", IDs2Add=c("symbol"))
+nearestGeneBodies = data.frame(peakID = geneBodies.g$peakID, 
+                               closestGene = geneBodies.g$symbol, 
+                               distanceToGene = geneBodies.g$distancetoFeature, 
+                               closestGeneENS = geneBodies.g$feature)
+# next, annotate all promoters within +/- 10 000 bp (one to many)
+nearPromoters.g = ChIPpeakAnno::annotatePeakInBatch(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g, 
+                                                    AnnotationData = annoData, 
+                                                    output = "nearestBiDirectionalPromoters",
+                                                    bindingRegion = c(-10000, 10000),
+                                                    select = "all")
+nearPromoters.g = ChIPpeakAnno::addGeneIDs(nearPromoters.g, orgAnn="org.Hs.eg.db", IDs2Add=c("symbol"))
+nearPromoters = data.frame(peakID = nearPromoters.g$peakID, 
+                           distanceToPromoter = nearPromoters.g$distanceToSite,
+                           promoterSymbol = nearPromoters.g$gene_name,
+                           promoterENS = nearPromoters.g$feature)
+# all peaks that weren't annotated, we are now going to find, and then look for the one closest promoter within 100 000 bp (one to one)
+missingPeakIDs = setdiff(consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g$peakID, nearPromoters.g$peakID)
+missingPeaks.g = consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g[consensusPeaklist_DP_CD127_pos_vs_DP_CD127_neg.g$peakID %in% missingPeakIDs]
+farPromoters.g = ChIPpeakAnno::annotatePeakInBatch(missingPeaks.g, 
+                                                   AnnotationData = annoData, 
+                                                   output = "nearestBiDirectionalPromoters",
+                                                   bindingRegion = c(-100000, 100000),
+                                                   select = "all")
+farPromoters = data.frame(peakID = farPromoters.g$peakID,
+                          distanceToPromoter = farPromoters.g$distanceToSite,
+                          promoterSymbol = farPromoters.g$gene_name, 
+                          promoterENS = farPromoters.g$feature)
+promoters = rbind(nearPromoters, farPromoters)
+promoters = dplyr::distinct(promoters)
+# process contrasts
+contrasts = dba.show(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, bContrast=T)
+contrasts = dplyr::mutate(contrasts, name = paste0(Group, "_vs_", Group2))
+dge_DP_CD127_pos_vs_DP_CD127_neg = c()
+for (iContrast in 1:nrow(contrasts)) {
+  dge_ = dba.report(consensusPeaks_DP_CD127_pos_vs_DP_CD127_neg, method=DBA_DESEQ2, contrast = iContrast, th = 1, DataType = DBA_DATA_FRAME)
+  dge_$peakID = as.numeric(rownames(dge_))
+  dge_ = merge(dge_, nearestGeneBodies, by = "peakID", all.x = TRUE, no.dups = FALSE)
+  dge_ = left_join(dge_, promoters, by = "peakID", keep = FALSE) 
+  dge_$peakPosition = paste0(dge_$Chr, ":", dge_$Start, "-", dge_$End)
+  dge_ = dplyr::arrange(dge_, FDR)
+  dge_DP_CD127_pos_vs_DP_CD127_neg[[iContrast]] = dge_
+}
+names(dge_DP_CD127_pos_vs_DP_CD127_neg) = contrasts$name
+
+```
+
+# Export differential peaks for HOMER analyses
+
+```{r}
+
+for (contrast in names(dge_DP_CD127_pos_vs_DP_CD127_neg)) {
+  dge_ = dge_DP_CD127_pos_vs_DP_CD127_neg[[contrast]]
+  
+  out = dge_ %>%
+        dplyr::filter(FDR < 0.1) %>%
+        dplyr::select(peakPosition, Fold, FDR, 
+                      promoterSymbol, promoterENS, distanceToPromoter,
+                      closestGene, closestGeneENS, distanceToGene
+                      ) %>%
+        dplyr::rename(logFC = Fold)
+                      
+  write.table(out, file =  "./saved_data/DP_CD127_pos_vs_DP_CD127_neg_differential_peaks_annotated.csv", quote=F, row.names=F)
+  bed = dge_ %>% dplyr::filter(FDR < pcutoff) %>% dplyr::select(Chr, Start, End, Fold)
+  bed = distinct(bed)
+  # add 3 more cols needed by Homer
+  bed$peakID = 1:nrow(bed)
+  bed$blank = "1"
+  bed$strand = "+"
+  bed$Chr = paste("chr", bed$Chr, sep = "")
+  # use consensus OCRs (open chromatin regions) from all non-naive CD8s as background for HOMER
+  write.table(dplyr::select(bed, peakID, Chr, Start, End, strand), file = dataDir("DP_CD127_pos_vs_DP_CD127_neg_all_peaks.txt"), sep="\t", quote=F, row.names=F, col.names=F)
+
+}
+
+```
+
+# Plot peak scores for open chromatin near cytotoxicity genes for all non-naive CD8s (supplementary figure 8A)
+
+```{r}
+
+peakFileName = "./saved_data/P576-1_grouped_diffbind_object.rds"
+# add a replicate index column (required by diffBind)
+design_grouped <- design %>%
+  group_by(responder, sort) %>%
+  mutate(replicate = row_number()) %>%
+  ungroup() %>%
+  mutate(responder = if_else(responder == "Yes", "Responder", "Non-responder"),
+         sort = case_when(
+           sort == "TIGIT-\nKLRG1-" ~ "DN",
+           sort == "(TIGIT+KLRG1+)-\nCD127+" ~ "non-exhausted CD127+",
+           sort == "TIGIT+KLRG1+\nCD57-CD127+" ~ "DP CD127+",
+           sort == "TIGIT+KLRG1+\nCD57+CD127-" ~ "DP CD57+",
+           sort == "TIGIT+KLRG1+\nCD57-CD127-PD1+" ~ "DP PD-1+"))
+if (file.exists(peakFileName)) {
+  consensusPeaks_grouped = readRDS(peakFileName)
+} else {
+  samples = data.frame(SampleID = design_grouped$sample_name, 
+                       Tissue = design_grouped$sort,
+                       Condition = design_grouped$responder, 
+                       Treatment = design_grouped$responder, 
+                       Replicate = design_grouped$replicate, 
+                       bamReads = design_grouped$bamFile, 
+                       Peaks = design_grouped$peakFiles, 
+                       PeakCaller = "narrow")
+  consensusPeaks_grouped = dba(sampleSheet=samples)
+  consensusPeaks_grouped = dba.count(consensusPeaks_grouped, peaks = "/Users/tybottorff/mounts/240327_VH00126_344_AACHGGFHV/Project_P576-1Processed_bri_240401/merged_peaks/all_merged_peaks.bed", summits = T)
+  consensusPeaks_grouped = dba.contrast(consensusPeaks_grouped, categories=DBA_TISSUE, block = c(DBA_REPLICATE, DBA_CONDITION))
+  consensusPeaks_grouped = dba.normalize(consensusPeaks_grouped, method=DBA_ALL_METHODS, library=DBA_LIBSIZE_FULL, normalize=DBA_NORM_LIB, background=FALSE)
+  consensusPeaks_grouped = dba.analyze(consensusPeaks_grouped, method = DBA_ALL_METHODS)
+  pca_plot <- dba.plotPCA(consensusPeaks_grouped, attributes = c(DBA_TISSUE, DBA_CONDITION), vColors = c("skyblue", "black", "yellow", "darkblue", "magenta", "orange", "darkgreen", "red", "grey", "lightgreen"))
+  pdf(plotDir("P576-1_cell_sort_and_responder_pca.pdf"))
+  print(pca_plot)
+  dev.off()
+  pca_plot <- dba.plotPCA(consensusPeaks_grouped, attributes = c(DBA_TISSUE), vColors = c("#440154FF", "#3B528BFF", "#21908CFF", "#FDE725FF", "#5DC863FF"))
+  pdf(plotDir("P576-1_cell_sort_pca.pdf"))
+  print(pca_plot)
+  dev.off()
+  consensusPeaks_grouped$config$condition <- "Responder status"
+  consensusPeaks_grouped$config$replicate <- "Donor"
+  consensusPeaks_grouped$config$tissue <- "Cell population"
+  consensusPeaks_grouped$class[DBA_ID,] <- ""
+dba.plotHeatmap(consensusPeaks_grouped, correlations = FALSE, scale = "row", ColAttributes = c(DBA_TISSUE, DBA_CONDITION, DBA_REPLICATE), colSideCols = list(DBA_TISSUE = viridis(5), DBA_CONDITION = c("black", "grey"), DBA_REPLICATE = c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F")), margin = 2, add.expr = {
+                   # Add legend for DBA_TISSUE
+                   legend("right", legend = unique(consensusPeaks_grouped$samples$Tissue), 
+                          fill = viridis(5),
+                          title = "Cell population")
+                 })
+  dev.off()
+  dba.show(consensusPeaks_grouped, bContrast=T)
+  saveRDS(consensusPeaks_grouped, file = pathToDataFile)
+}
+
+# re-run steps outside diffbind
+peaks_list <- consensusPeaks_grouped$peaks
+count_matrix <- as.data.frame(peaks_list[[1]]$Reads)
+for (i in 2:length(peaks_list)) {
+  sample_data <- peaks_list[[i]]
+  counts <- sample_data$Reads
+  count_matrix <- cbind(count_matrix, counts)
+}
+tissue <- consensusPeaks_grouped$samples$Tissue
+responder_status <- consensusPeaks_grouped$samples$Condition
+colnames(count_matrix) <- paste(consensusPeaks_grouped$samples$Tissue, consensusPeaks_grouped$samples$Condition, consensusPeaks_grouped$samples$Replicate, sep = "_")
+# normalize by library size
+library_sizes <- colSums(count_matrix)
+count_matrix <- sweep(count_matrix, 2, library_sizes, FUN = "/")
+# regress out effect of responder status (minimal) in comparing cell subsets
+regress_out_responder_status <- function(feature, responder_status) {
+  model <- lm(feature ~ responder_status)
+  residuals(model)
+}
+regress_out_tissue <- function(feature, tissue) {
+  model <- lm(feature ~ tissue)
+  residuals(model)
+}
+features <- t(count_matrix)
+R_NR_adjusted_features <- sapply(1:ncol(features), function(i) {
+  feature <- features[, i]
+  regress_out_responder_status(feature, responder_status)
+})
+R_NR_adjusted_features_df <- as.data.frame(R_NR_adjusted_features)
+tissue_adjusted_features <- sapply(1:ncol(features), function(i) {
+  feature <- features[, i]
+  regress_out_tissue(feature, tissue)
+})
+tissue_adjusted_features_df <- as.data.frame(tissue_adjusted_features)
+# log2 adjust
+tissue_adjusted_features_df_log2 <- log2(tissue_adjusted_features_df - min(tissue_adjusted_features_df) + 1)
+pca_result_tissue_adjusted <- prcomp((tissue_adjusted_features_df_log2), scale. = TRUE)
+pca_scores <- data.frame(pca_result_tissue_adjusted$x)
+explained_variance <- summary(pca_result_tissue_adjusted)$importance[2, 1:3] * 100
+pca_scores$responder_status <- consensusPeaks_grouped$samples$Condition
+# log2 adjust
+R_NR_adjusted_features_df_log2 <- log2(R_NR_adjusted_features_df - min(R_NR_adjusted_features_df) + 1)
+pca_result_R_NR_adjusted <- prcomp((R_NR_adjusted_features_df_log2), scale. = TRUE)
+pca_scores <- data.frame(pca_result_R_NR_adjusted$x)
+explained_variance <- summary(pca_result_R_NR_adjusted)$importance[2, 1:2] * 100
+pca_scores$Tissue <- consensusPeaks_grouped$samples$Tissue
+pca_scores$Tissue <- factor(consensusPeaks_grouped$samples$Tissue, levels = c("DN", "non-exhausted CD127+", "DP CD127+", "DP PD-1+", "DP CD57+"))
+tissue_colors <- viridis(5)
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Tissue)) +
+  geom_point(size = 2.5) +
+  stat_ellipse(aes(group = Tissue), level = 0.95) +
+  scale_color_manual(values = tissue_colors) +
+  labs(x = paste("PC1 (", round(explained_variance[1], 2), "%)", sep = ""), y = paste("PC2 (", round(explained_variance[2], 2), "%)", sep = ""),
+       color = "CD8 subpopulation") +
+  theme(legend.text = element_text(size = 10))
+compVar <- data.frame(PC1 = pca_scores$PC1,
+                      PC2 = pca_scores$PC2,
+                      PC3 = pca_scores$PC3,
+                      group = pca_scores$Tissue)
+res <- compareGroups(group ~ PC1 + PC2 + PC3, data = compVar, p.corrected = TRUE, method = 1)
+annoData <- ChIPpeakAnno::toGRanges(EnsDb.Hsapiens.v86, feature="gene")
+annoData = annoData[seqnames(annoData) %in% paste0("chr",c(1:23,"X","Y"))]
+ucsc.levels <- paste0("chr",c(1:23,"X","Y"))
+seqlevels(annoData) <- ucsc.levels
+seqlevelsStyle(annoData) <- "NCBI"
+consensusPeaklist_grouped = dba.peakset(consensusPeaks_grouped, bRetrieve=T, DataType = DBA_DATA_FRAME)
+filterChr = c(1:23, "X", "Y")
+bed = consensusPeaklist_grouped %>% dplyr::filter(START >= 0, CHR %in% filterChr) %>% dplyr::select(CHR, START, END)
+consensusPeaklist_grouped$peakID = 1:nrow(consensusPeaklist_grouped)
+consensusPeaklist_grouped.g = GRanges(seqnames = consensusPeaklist_grouped$CHR, 
+                                 IRanges(start = consensusPeaklist_grouped$START, 
+                                         end = consensusPeaklist_grouped$END), 
+                                 strand = "*", 
+                                 peakID = consensusPeaklist_grouped$peakID)
+seqlevelsStyle(consensusPeaklist_grouped.g) = "UCSC"
+seqlevels(consensusPeaklist_grouped.g)
+consensusPeaklist_grouped.g = consensusPeaklist_grouped.g[seqnames(consensusPeaklist_grouped.g) %in% paste0("chr",c(1:23,"X","Y"))]
+seqlevels(consensusPeaklist_grouped.g) <- ucsc.levels
+seqlevelsStyle(consensusPeaklist_grouped.g) <- "NCBI"
+seqlevels(consensusPeaklist_grouped.g)
+# first annotate the closest gene bodies (one to one)
+geneBodies.g <- ChIPpeakAnno::annotatePeakInBatch(consensusPeaklist_grouped.g, 
+                                                  AnnotationData = annoData, 
+                                                  output = "nearestLocation",
+                                                  select = "first")
+geneBodies.g = ChIPpeakAnno::addGeneIDs(geneBodies.g, orgAnn="org.Hs.eg.db", IDs2Add=c("symbol"))
+nearestGeneBodies = data.frame(peakID = geneBodies.g$peakID, 
+                               closestGene = geneBodies.g$symbol, 
+                               distanceToGene = geneBodies.g$distancetoFeature, 
+                               closestGeneENS = geneBodies.g$feature)
+# next annotate all promoters within +/- 10 000 bp (one to many)
+nearPromoters.g = ChIPpeakAnno::annotatePeakInBatch(consensusPeaklist_grouped.g, 
+                                                    AnnotationData = annoData, 
+                                                    output = "nearestBiDirectionalPromoters",
+                                                    bindingRegion = c(-10000, 10000),
+                                                    select = "first")
+nearPromoters.g = ChIPpeakAnno::addGeneIDs(nearPromoters.g, orgAnn="org.Hs.eg.db", IDs2Add=c("symbol"))
+nearPromoters = data.frame(peakID = nearPromoters.g$peakID, 
+                           distanceToPromoter = nearPromoters.g$distanceToSite,
+                           promoterSymbol = nearPromoters.g$gene_name,
+                           promoterENS = nearPromoters.g$feature)
+# all peaks that weren't annotated, we are now going to find, and then look for the one closest promoter within 100 000 bp (one to one)
+missingPeakIDs = setdiff(consensusPeaklist_grouped.g$peakID, nearPromoters.g$peakID)
+missingPeaks.g = consensusPeaklist_grouped.g[consensusPeaklist_grouped.g$peakID %in% missingPeakIDs]
+farPromoters.g = ChIPpeakAnno::annotatePeakInBatch(missingPeaks.g, 
+                                                   AnnotationData = annoData, 
+                                                   output = "nearestBiDirectionalPromoters",
+                                                   bindingRegion = c(-100000, 100000),
+                                                   select = "first")
+farPromoters = data.frame(peakID = farPromoters.g$peakID,
+                          distanceToPromoter = farPromoters.g$distanceToSite,
+                          promoterSymbol = farPromoters.g$gene_name, 
+                          promoterENS = farPromoters.g$feature)
+promoters = rbind(nearPromoters, farPromoters)
+promoters = dplyr::distinct(promoters)
+annotation_info <- nearestGeneBodies %>%
+  full_join(nearPromoters, by = "peakID") %>%
+  full_join(farPromoters, by = c("peakID", "distanceToPromoter", "promoterSymbol", "promoterENS"))
+contrasts = dba.show(consensusPeaks_grouped, bContrast=T)
+contrasts = dplyr::mutate(contrasts, name = paste0(Group, "_vs_", Group2))
+dge_grouped = c()
+for (iContrast in 1:nrow(contrasts)) {
+  dge_ = dba.report(consensusPeaks_grouped, method=DBA_DESEQ2, contrast = iContrast, th = 1, DataType = DBA_DATA_FRAME)
+  dge_$peakID = as.numeric(rownames(dge_))
+  dge_ = merge(dge_, nearestGeneBodies, by = "peakID", all.x = TRUE, no.dups = FALSE)
+  dge_ = left_join(dge_, promoters, by = "peakID", keep = FALSE) 
+  dge_$peakPosition = paste0(dge_$Chr, ":", dge_$Start, "-", dge_$End)
+  dge_ = dplyr::arrange(dge_, FDR)
+  dge_grouped[[iContrast]] = dge_
+}
+names(dge_grouped) = contrasts$name
+col_fun = colorRamp2(c(-4, 0, 4), c("#0033a0", "white", "#FE5000"))
+reorder = order(design_grouped$sort, design_grouped$libid)
+design_grouped_ <- design_grouped[reorder, ]
+countsConsensusPeaks = as.matrix(consensusPeaklist_grouped[ , 4:(ncol(consensusPeaklist_grouped)-1)])
+countsConsensusPeaks_ = countsConsensusPeaks[ , reorder]
+design_grouped$sort <- ifelse(is.na(design_grouped$sort), "DN", design_grouped$sort)
+design_grouped_$sort <- ifelse(is.na(design_grouped_$sort), "DN", design_grouped_$sort)
+names(dge_grouped) <- if_else(
+  str_starts(names(dge_grouped), "_"),
+  paste0("DN", names(dge_grouped)),
+  names(dge_grouped)
+)
+desired_order <- c("DN", "non-exhausted CD127+", "DP CD127+", "DP PD-1+", "DP CD57+")
+design_grouped_$sort <- factor(design_grouped_$sort, levels = desired_order)
+order_index <- order(design_grouped_$sort)
+colors.sort = c("#9E4C95", "#7D2B54", "#BF6E7A", "#37773C", "#302583")
+names(colors.sort) <- desired_order
+for (contrast in names(dge_grouped)[1]) {
+  dge_ = dge_grouped[[contrast]]
+  sigPeaks = dge_ %>% filter(peakID %in% annotation_info$peakID) %>% group_by(peakID) %>%
+  # take closest promoter for multiples annotated
+  arrange(distanceToPromoter) %>%
+  slice(1) %>%
+  ungroup()
+  sigPeaks$geneSet <- case_when(
+    sigPeaks$closestGene %in% cytotoxicity_genes | sigPeaks$promoterSymbol %in% cytotoxicity_genes ~ "Cytotoxicity",
+    TRUE ~ "Other")
+  sigPeaks <- sigPeaks %>%
+    filter(geneSet == "Cytotoxicity")
+  gene_set_labels <- data.frame(
+    geneSet = sigPeaks$geneSet)
+  sigPeaksNames = paste(sigPeaks$closestGene, sigPeaks$promoterSymbol, sep = ", ")
+  sigPeaksIDs = sigPeaks$peakID
+  counts_ = countsConsensusPeaks_[rownames(countsConsensusPeaks_) %in% sigPeaksIDs, ]
+  rownames(counts_) = sigPeaksNames
+  tp = t(scale(t(log2(1 + counts_))))
+  tp = tp[, order_index]
+  ha <- HeatmapAnnotation(df = list(group = design_grouped_$sort[order_index]), 
+                          col = list(group = colors.sort)
+                          )
+  hm = Heatmap(tp, show_column_names = FALSE, show_row_names = TRUE, 
+               cluster_columns = FALSE, name = "scaled\nlog2\npeak score", 
+               top_annotation = ha, col = col_fun, cluster_rows = FALSE, show_row_dend = TRUE, column_title = "", row_title = "Cytotoxicity OCRs", row_names_gp = gpar(fontsize = 10), row_title_gp = gpar(fontsize = 20), heatmap_legend_param = list(title = "scaled\nlog2\npeak score", title_gp = gpar(fontsize = 20), labels_gp = gpar(fontsize = 20)), row_split = gene_set_labels$geneSet)
+  plot(hm)
+  pdf("./figures/supp_fig_8A.pdf", height = 7, width = 7.5)
+  print(hm)
+  invisible(dev.off())
+}
+
+```

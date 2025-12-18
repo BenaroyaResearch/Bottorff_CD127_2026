@@ -1,0 +1,86 @@
+---
+title: "Analysis of ex vivo data from TN10 participants"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load libraries, set theme and directory
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+
+options(stringsAsFactors = FALSE)
+set.seed(42)
+
+`%notin%` <- Negate(`%in%`)
+select <- dplyr::select
+rename <- dplyr::rename
+filter <- dplyr::filter
+distinct <- dplyr::distinct
+mutate <- dplyr::mutate
+
+theme_set(
+  theme_bw(20) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour="black", fill = NA, size = 1),
+          axis.text = element_text(colour="black"),
+          axis.ticks = element_line(colour="black"),
+          axis.text.x = element_text(angle=0),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 7)))
+
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/EX_VIVO/")
+
+```
+
+# Compare proliferation and functionality of Tex subsets (figure 6E)
+
+```{r}
+
+ex_vivo_data <- read_xlsx("./raw_data/ex_vivo_data.xlsx")
+df_prolif <- filter(ex_vivo_data, measure == "Proliferation Index of labelled subset")
+df_ifng   <- filter(ex_vivo_data, measure == "% IFNγ+ of labelled subset")
+max_prolif <- max(df_prolif$value, na.rm = TRUE)
+max_ifng   <- max(df_ifng$value, na.rm = TRUE)
+min_prolif <- min(df_prolif$value, na.rm = TRUE)
+min_ifng   <- min(df_ifng$value, na.rm = TRUE)
+pad_factor <- 1.2
+p1 <- ggplot(df_prolif, aes(x = group, y = value, group = pairing)) +
+  geom_line(color = "grey40", linewidth = 1) +
+  geom_point(color = "grey20", size = 2) +
+  labs(y = "Proliferation Index\nof subset", x = "Tex") +
+  coord_cartesian(ylim = c(min_prolif/pad_factor, max_prolif * pad_factor))
+p2 <- ggplot(df_ifng, aes(x = group, y = value, group = pairing)) +
+  geom_line(color = "grey40", linewidth = 1) +
+  geom_point(color = "grey20", size = 2) +
+  labs(y = "% IFNγ+ of\nsubset", x = "Tex") +
+  coord_cartesian(ylim = c(min_ifng/pad_factor, max_ifng * pad_factor))
+fig_6E <- plot_grid(
+  p1, p2,
+  ncol = 2,
+  align = "hv",
+  axis = "tblr"
+)
+fig_6E
+ggsave("./figures/6E.pdf", fig_6E, width = 6.5, height = 3.5)
+# stats
+prolif_test <- with(
+  prolif_wide,
+  t.test(`CD127-`, `CD127+`, paired = TRUE)
+)
+ifng_test <- with(
+  ifng_wide,
+  t.test(`CD127-`, `CD127+`, paired = TRUE)
+)
+prolif_test
+ifng_test
+
+```
