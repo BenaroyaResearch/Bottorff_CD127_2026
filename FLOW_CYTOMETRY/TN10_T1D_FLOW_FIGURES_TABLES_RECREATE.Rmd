@@ -51,7 +51,14 @@ setwd("/Users/tybottorff/git/Bottorff_CD127_2026/FLOW_CYTOMETRY/")
 
 ```{r}
 
-metadata <- read_xlsx("./raw_data/t1d_metadata.xlsx")
+more_times <- read_xlsx("./raw_data/full_tn10_times.xlsx") %>%
+  rename(`Masked ID of TN10 Clinical Data_Linsley_20190104_copy 20240716 JMP file` = MaskID,
+         `Time.to.T1D (months)` = Time,
+         T1D.event = Status)
+
+metadata <- read_xlsx("./raw_data/t1d_metadata.xlsx") %>%
+  select(-T1D.event, -`Time.to.T1D (months)`) %>%
+  left_join(more_times, by = "Masked ID of TN10 Clinical Data_Linsley_20190104_copy 20240716 JMP file")
 tex_subsets <- read_xlsx("./raw_data/tex_subsets.xlsx") %>%
   mutate(Barcode = str_extract(`Sample:`, "^TN\\d+F\\d+"),
         # use 2 cols to define PD1+ (% Tex)
@@ -219,7 +226,6 @@ run_one <- function(marker_col, cluster_idx){
     data = df_base,
     risk.table = TRUE,
     break.time.by = 12,
-    xlim = c(0, 86),
     xlab = "Months",
     ylab = "% T1D free",
     palette = c(current_hi_col, current_lo_col, "grey"),
@@ -234,7 +240,7 @@ run_one <- function(marker_col, cluster_idx){
       axis.text = element_text(size = 20),
       axis.title = element_text(size = 24))
   )
-  pdf(file = paste0("./figures/", "supp_fig_2A_", marker_col), width = 3, height = 5)
+  pdf(file = paste0("./figures/", "supp_fig_2A_", marker_col, ".pdf"), width = 3, height = 5)
   print(p)
   dev.off()
   # stats
@@ -287,7 +293,6 @@ fig1C <- ggsurvplot(
   data = df_base,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#000000", "#000001", "grey"),
@@ -343,7 +348,6 @@ fig1D_left <- ggsurvplot(
   data = df_base,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#7D2B54", "#7D2B55", "grey"),
@@ -399,7 +403,6 @@ fig1D_right <- ggsurvplot(
   data = df_base,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#7D2B54", "#7D2B55", "grey"),
@@ -551,7 +554,6 @@ fig3A <- ggsurvplot(
   data = df_base,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#7D2B54", "#7D2B55", "#bebebe", "#bebebf"),
@@ -605,7 +607,6 @@ fig_4B <- ggsurvplot(
   data = df_cd127,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#BF6E7A", "#BF6E7B", "grey"),
@@ -657,7 +658,6 @@ supp_fig_6B <- ggsurvplot(
   data = df_cd127,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#BF6E7A", "#BF6E7B", "#bebebf", "#bebebe"),
@@ -705,7 +705,6 @@ fig_4C <- ggsurvplot(
   data = df_cd57,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#302583", "#302584", "grey"),
@@ -753,7 +752,6 @@ fig_4D <- ggsurvplot(
   data = df_pd1,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#37773C", "#37773D", "grey"),
@@ -802,7 +800,6 @@ supp_fig_6C <- ggsurvplot(
   data = df_cd127,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#BF6E7A", "#BF6E7B", "grey"),
@@ -851,7 +848,6 @@ supp_fig_6D <- ggsurvplot(
   data = df_cd57,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#302583", "#302584", "grey"),
@@ -899,7 +895,6 @@ supp_fig_6E <- ggsurvplot(
   data = df_pd1,
   risk.table = TRUE,
   break.time.by = 12,
-  xlim = c(0, 86),
   xlab = "Months",
   ylab = "% T1D free",
   palette = c("#37773C", "#37773D", "grey"),

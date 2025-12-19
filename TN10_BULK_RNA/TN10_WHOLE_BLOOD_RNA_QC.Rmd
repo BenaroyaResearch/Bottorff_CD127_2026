@@ -1,0 +1,633 @@
+---
+title: "Quality control of bulk RNA-sequencing of TN10 participant samples"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load libraries, mask functions, set theme and directory
+
+```{r}
+
+library(knitr)
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(ggthemes)
+library(RColorBrewer)
+library(kableExtra)
+library(RNAseQC)
+library(miscHelpers)
+library(limma)
+library(countSubsetNorm)
+
+theme_set(
+  theme_bw(20) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = 
+            element_rect(color = "black", 
+                         fill = NA, linewidth = 1),
+          axis.text = element_text(color = "black"),
+          text = element_text(size = 12),
+          axis.ticks = element_line(color = "black")))
+update_geom_defaults("point", list(shape=16))
+
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/TN10_BULK_RNA/")
+
+```
+
+# Run quality control, export QC-passing, batch-corrected data
+
+```{r}
+
+patientData <- read_xlsx("./raw_data/tn10_whole_blood_metadata_20190110.xlsx", sheet = "Demo_Tx Arm_Outcome") %>%
+  remove_all_NA_rowcols() %>%
+  standardize_dimnames() %>%
+  rename(
+    months_to_t1d_or_last_followup = time_to_t1d) %>%
+  mutate(
+    masked_id = as.character(masked_id),
+    sex = factor(str_to_lower(gender), levels = c("female", "male")),
+    treatment_arm = factor(str_to_lower(treatment_arm), 
+                           levels = c("placebo", "teplizumab")),
+    t1d_event = as.logical(t1d_event),
+    age_group = cut(age, breaks = c(7,12,17,50), include.lowest = TRUE),
+    age_split2 = cut(age, breaks = c(7, median(age), 50), include.lowest = TRUE)) %>%
+  select(-gender)
+patientData[,c("months_to_t1d", "months_to_last_followup")] <- as.numeric(NA)
+patientData$months_to_t1d[patientData$t1d_event] <-
+  patientData$months_to_t1d_or_last_followup[patientData$t1d_event]
+patientData$months_to_last_followup[!patientData$t1d_event] <-
+  patientData$months_to_t1d_or_last_followup[!patientData$t1d_event]
+PatientSubsetData <- read_xlsx("./raw_data/whole_blood_tn10_metadata_selected_pats_20190123.xlsx") %>%
+  remove_all_NA_rowcols() %>%
+  standardize_dimnames() %>%
+  mutate(
+    masked_id = as.character(masked_id),
+    znt8 = factor(str_to_lower(znt8), levels = c("negative", "positive")),
+    hladr3 = factor(str_to_lower(hladr3), levels = c("absent", "present")),
+    hladr4 = factor(str_to_lower(hladr4), levels = c("absent", "present")))
+patientData <-
+  patientData %>%
+  merge(PatientSubsetData,
+        all.x = TRUE)
+PAL_SUBJECT <-
+  big_colorblind_pal(
+    length(unique(patientData$masked_id)),
+    drop_yellow = TRUE, drop_black = TRUE) %>%
+  setNames(unique(patientData$masked_id))
+PAL_T1D_EVENT <-
+  c("TRUE"="red", "FALSE"="blue")
+PAL_CONTENT_TYPE <-
+  c("whole_blood"="red", "total_rna"="black")
+PAL_TREATMENT_ARM <-
+  c("placebo"="orangered", "teplizumab"="dodgerblue")
+PAL_SEX <-
+  c("female"="orchid", "male"="royalblue4")
+PAL_HLA_DR4 <-
+  c("absent"="gray50", "present"="blue")
+PAL_HLA_DR3 <-
+  c("absent"="gray50", "present"="blue")
+PAL_ZNT8 <-
+  c("positive"="gray50", "negative"="blue")
+# Load RNAseq library prep and sample annotation data
+sampleAnnotationRna.tmp <- read_xlsx("./raw_data/tn10_whole_blood_sample_anno_20190104.xlsx", sheet = "RNA", range = "A1:M109") %>%
+  standardize_dimnames() %>%
+  select(-X) %>%
+  rename(batch = batch_number) %>%
+  mutate(barcode = as.character(barcode),
+         masked_id = as.character(masked_id))
+sampleAnnotationWholeBlood.tmp <- read_xlsx("./raw_data/tn10_whole_blood_sample_anno_20190104.xlsx", sheet = "WholeBlood", range = "A1:J95") %>%
+  standardize_dimnames() %>%
+  select(-X) %>%
+  mutate(barcode = as.character(barcode),
+         masked_id = as.character(masked_id))
+# merge the RNA and whole_blood sample annotation
+sampleAnnotation <-
+  bind_rows(sampleAnnotationRna.tmp, sampleAnnotationWholeBlood.tmp) %>%
+  remove_all_NA_rowcols() %>%
+  mutate(
+    visit = 
+      visit %>% 
+      str_to_lower() %>%
+      str_replace_all(" ", "_") %>%
+      factor(levels = c("baseline", "day_20", "12_months", "prn"))) %>%
+  select(barcode, masked_id, visit, sample_type = type, draw_date, everything()) %>%
+  dplyr::rename(sample_row = row, sample_column = column)
+levels(sampleAnnotation$visit) <-
+  c("baseline", "day_20", "month_12", "prn")
+# read RNAseq library prep data, read in library prep for first set of samples
+rnaseqLibraryPrep1 <- read_xlsx("./raw_data/p264_1_final_anno.xlsx", sheet = 1, range = "A1:AE199") %>%
+  remove_all_NA_rowcols() %>%
+  standardize_dimnames() %>%
+  dplyr::rename(
+    libid = library_sampleid,
+    plate_well = location_19,
+    plate = location_20,
+    index_7_1 = index_7_28,
+    index_7_2 = index_7_29,
+    index_5_1 = index_5_30,
+    index_5_2 = index_5_31) %>%
+  mutate(
+    lib_prep_batch = "orig",
+    barcode = str_extract(sample_name, "(?<=^[0-9]{1,3}_)[0-9A-Z]+$"),
+    content_type = content_type %>% str_to_lower %>% str_replace_all(" ", "_"))
+# read in library prep for second set of samples
+rnaseqLibraryPrep2 <- read_xlsx("./raw_data/p264_2_final_anno.xlsx", sheet = 1, range = "A1:AT17") %>%
+  remove_all_NA_rowcols() %>%
+  standardize_dimnames() %>%
+  dplyr::rename(
+    libid = new_lib_id,
+    old_libid = library_sampleid,
+    plate_well = location_19,
+    plate = location_20,
+    index_7_1_old = index_7_28,
+    index_7_2_old = index_7_29,
+    index_5_1_old = index_5_30,
+    index_5_2_old = index_5_31,
+    index_7_1_new = index_7_43,
+    index_7_2_new = index_7_44,
+    index_5_1_new = index_5_45,
+    index_5_2_new = index_5_46) %>%
+  mutate(
+    lib_prep_batch="rerun",
+    barcode = str_extract(sample_name, "(?<=^[0-9]{1,3}_)[0-9A-Z]+$"),
+    content_type = content_type %>% str_to_lower %>% str_replace_all(" ", "_"))
+rnaseqLibraryPrep <-
+  bind_rows(
+    rnaseqLibraryPrep1,
+    rnaseqLibraryPrep2)
+intersect(colnames(rnaseqLibraryPrep1), colnames(rnaseqLibraryPrep2))
+# check for cases where there is not a 1:1 barcode match
+samplesMergedRnaseq <- c("112834349", "112833581", "112833485", "112831833")
+if (!setequal(sampleAnnotation$barcode, c(rnaseqLibraryPrep$barcode, samplesMergedRnaseq))) {
+  cat("\nWARNING! Some barcodes do not match between sample annotation and library prep data files!!!\n")
+  # for one subject/visit, samples were combined for a single library; check that these are the only ones that are off
+  sampleAnnotation %>%
+    dplyr::filter(
+      masked_id %in%
+        (sampleAnnotation %>%
+        dplyr::filter(
+          barcode %nin% rnaseqLibraryPrep$barcode) %>%
+        pull(masked_id) %>%
+        unique()) &
+      visit %in%
+        (sampleAnnotation %>%
+        dplyr::filter(
+          barcode %nin% rnaseqLibraryPrep$barcode) %>%
+        pull(visit) %>%
+        unique()))
+  # these are all the same; just use the one that was included in the rnaseqLibraryPrep file
+}
+rm_tmp(ask=FALSE)
+# merge sample annotation and library prep data
+rnaseqAnnotation <-
+  sampleAnnotation %>%
+  merge(rnaseqLibraryPrep,
+        by = "barcode", all.y = TRUE) %>%
+  merge(patientData, by = "masked_id") %>%
+  dplyr::select(libid, masked_id, treatment_arm, visit, content_type, everything())
+# Load RNAseq metrics
+# read metrics files
+metrics <-
+  rbind(
+    read.csv("./raw_data/tn10_whole_blood_metrics_p264_1.csv"),
+    read.csv("./raw_data/tn10_whole_blood_metrics_p264_2.csv")) %>%
+  standardize_dimnames() %>%
+  remove_all_NA_rowcols()
+# standardize column types
+for (i in 2:ncol(metrics)) {
+  if (!is.numeric(metrics[, i, drop = TRUE])) {
+    if (sum(na.omit(str_detect(metrics[, i, drop = TRUE], "%"))) > 0) {
+      metrics[,i] <- as.numeric(str_replace(metrics[, i, drop = TRUE], "%", "")) / 100
+    }
+  }
+}
+# Trim Lib ID's to lib#### (lib plus 4 digit)
+metrics$libid <-
+  metrics$libid %>%
+  str_extract("lib[0-9]+") %>%
+  make.unique(sep = "_")
+if (any(duplicated(metrics$libid)))
+  cat("\nUh oh! One or more libraries are duplicated in metrics. You should probably look into that.\n") # none, good!
+# Make quality control cuts
+# Set QC cuts
+thresholdsQc <-
+  c(align_percent = 0.9,
+    total_reads = 1.5,
+    aligned_reads = 1,
+    median_cv_coverage = 0.5)
+nLibsLowCounts <- 20
+# Quality control plots
+# plot of reads across all libraries, colored by content type
+barplot(
+   metrics %>% 
+     arrange(fastq_total_reads) %>%
+     pull(fastq_total_reads) %>%
+     magrittr::divide_by(10^6),
+   main = "Read count for all libraries", 
+   xlab = "libraries", ylab = "total reads (in millions)",
+   col =
+     PAL_CONTENT_TYPE[
+       metrics %>%
+         merge(rnaseqAnnotation %>%
+                 dplyr::select(libid, content_type),
+               all.x = TRUE) %>%
+         dplyr::arrange(fastq_total_reads) %>%
+         pull(content_type)])
+abline(h = thresholdsQc[["total_reads"]])
+barplot(
+   metrics %>% 
+     arrange(fastq_total_reads) %>%
+     dplyr::slice(1:nLibsLowCounts) %>%
+     pull(fastq_total_reads) %>%
+     magrittr::divide_by(10^6),
+   main = "Read count for low-count libraries", 
+   xlab = "libraries", ylab = "total reads (in millions)",
+   col =
+     PAL_CONTENT_TYPE[
+       metrics %>%
+         merge(rnaseqAnnotation %>%
+                 dplyr::select(libid, content_type),
+               all.x = TRUE) %>%
+         dplyr::arrange(fastq_total_reads) %>%
+         dplyr::slice(1:nLibsLowCounts) %>%
+         pull(content_type)])
+abline(h = thresholdsQc[["total_reads"]])
+ggplot(
+  data = metrics %>% merge(rnaseqAnnotation, by = "libid"),
+  mapping = 
+    aes(
+      x = median_cv_coverage, y = mapped_reads_w_dups, color = content_type)) +
+  geom_point() +
+  geom_hline(yintercept = thresholdsQc[["align_percent"]], 
+             color = "red", linetype = "dashed") +
+  geom_vline(xintercept = thresholdsQc[["median_cv_coverage"]], 
+             color = "red", linetype = "dashed") +
+  labs(x = "Median CV coverage", y = "% of reads aligned") +
+  scale_color_manual("Sample\ntype", values = PAL_CONTENT_TYPE)
+# Remove low-quality libraries
+metricsQc <-
+  metrics %>%
+  dplyr::filter(
+    pf_hq_aligned_reads >= thresholdsQc[["aligned_reads"]] * 1e6,
+    mapped_reads_w_dups >= thresholdsQc[["align_percent"]],
+    median_cv_coverage <= thresholdsQc[["median_cv_coverage"]]) %>%
+  dplyr::arrange(libid)
+rnaseqAnnotationQc <-
+  rnaseqAnnotation %>%
+  dplyr::filter(libid %in% metricsQc$libid) %>%
+  dplyr::arrange(libid)
+# Checks for data correspondence to sample annotation
+# Check annotated sex against inferred sex from X and Y chromosome gene counts
+# infer sex based on RNA-seq reads
+metricsQc$logXyRatio <- log(1/metricsQc$y_x_count_ratio)
+# plot histogram, and use it to determine break point
+ggplot(
+  metricsQc %>%
+    merge(rnaseqAnnotationQc, by = "libid"),
+  mapping = aes(x = x_counts, y = y_counts, color = sex)) +
+  geom_point(size = 2) +
+  scale_x_log10() + scale_y_log10() +
+  labs(x = "X-chromosome read count", y = "Y-chromosome read count") +
+  scale_color_manual(values = PAL_SEX)
+ggplot(
+  metricsQc %>%
+    merge(rnaseqAnnotationQc, by = "libid"),
+  mapping = aes(x = logXyRatio, fill = sex)) +
+  geom_histogram(color = "black", position = "dodge") +
+  labs(x = "log ratio of X to Y chromosome reads") +
+  scale_fill_manual(values = PAL_SEX)
+thresholdLogXyRatio <- 6
+metricsQc$sexByRna <-
+  ifelse(metricsQc$logXyRatio >= thresholdLogXyRatio, "female", "male") %>%
+  factor(levels = c("female", "male"))
+libidMismatchedSex <-
+  metricsQc %>%
+  dplyr::select(libid, sexByRna) %>%
+  merge(rnaseqAnnotation %>%
+          dplyr::select(libid, masked_id, sex)) %>%
+  dplyr::filter(sexByRna != sex) %>%
+  dplyr::pull(libid)
+maskedIdMultipleSex <-
+  metricsQc %>%
+  dplyr::select(libid, sexByRna) %>%
+  merge(rnaseqAnnotation %>%
+          dplyr::select(libid, masked_id)) %>%
+  dplyr::select(-libid) %>%
+  table() %>%
+  magrittr::is_greater_than(0) %>%
+  colSums() %>%
+  magrittr::is_greater_than(1) %>%
+  which() %>%
+  names()
+metricsQc %>%
+  merge(rnaseqAnnotation %>%
+          dplyr::select(libid, masked_id, visit, content_type)) %>%
+  dplyr::filter(libid %in% libidMismatchedSex) %>%
+  dplyr::select(
+    masked_id, sexByRna, logXyRatio, libid, visit, content_type,
+    total_reads_aligned = pf_hq_aligned_reads,
+    median_cv_coverage, percent_aligned = mapped_reads_w_dups) %>%
+  dplyr::arrange(masked_id, visit) %>%
+  kable()
+# SNP-based kinship values
+# The second, more specific, approach we can use is comparisons of SNPs called from RNA-seq reads.
+filenameKinshipData <- file.path("./raw_data/p264_1_2.kin")
+kinshipData <-
+  read.table(filenameKinshipData, sep = "\t", header = T) %>%
+  standardize_dimnames() %>%
+  merge(rnaseqAnnotation %>% dplyr::select(libid, masked_id, visit),
+        by.x = "id1", by.y = "libid") %>%
+  dplyr::rename(masked_id_1 = masked_id, visit_1 = visit) %>%
+  merge(rnaseqAnnotation %>% dplyr::select(libid, masked_id, visit),
+        by.x = "id2", by.y = "libid") %>%
+  dplyr::rename(masked_id_2 = masked_id, visit_2 = visit) %>%
+  mutate(subjectMatch = c("different", "same")[as.numeric(masked_id_1 == masked_id_2) + 1])
+PAL_SUBJECT_MATCH <-
+  big_colorblind_pal(2, drop_black = TRUE) %>%
+  setNames(c("same", "different"))
+thresholdKinship <- 0.38
+kinshipData <-
+  kinshipData %>%
+  mutate(kinshipFitsPair = 
+           ((kinship > thresholdKinship) & (subjectMatch=="same")) |
+           ((kinship < thresholdKinship) & (subjectMatch=="different")))
+kinshipDataQc <-
+  kinshipData %>%
+  dplyr::filter(
+    id1 %in% rnaseqAnnotationQc$libid,
+    id2 %in% rnaseqAnnotationQc$libid)
+# plot kinship vs. n_snp, colored by whether subjects are supposed to be the same
+ggplot(
+  kinshipDataQc %>%
+    dplyr::arrange(subjectMatch),
+  # mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = subject)) +
+  # scale_size_manual("Subject", values = c("same" = 2, "different" = 1)) +
+  mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = kinshipFitsPair)) +
+  scale_size_manual(values = c("FALSE" = 2.5, "TRUE" = 1)) +
+  guides(size = "none") +
+  scale_color_manual("Subject", values = PAL_SUBJECT_MATCH) +
+  labs(x = "# of overlapping SNPs") +
+  geom_point()
+ggplot(
+  kinshipDataQc %>%
+    dplyr::arrange(subjectMatch),
+  # mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = subject)) +
+  # scale_size_manual("Subject", values = c("same" = 2, "different" = 1)) +
+  mapping = aes(x = hethet, y = kinship, color = subjectMatch, size = kinshipFitsPair)) +
+  scale_size_manual(values = c("FALSE" = 2.5, "TRUE" = 1)) +
+  guides(size = "none") +
+  scale_color_manual("Subject", values = PAL_SUBJECT_MATCH) +
+  labs(x = "Proportion of SNPs with double heterozygotes") +
+  geom_point()
+libidMismatchedSamplesKinship <-
+  kinshipDataQc %>%
+  dplyr::filter(!kinshipFitsPair) %>%
+  merge(rnaseqAnnotation, by.x = "id1", by.y = "libid") %>%
+  merge(rnaseqAnnotation, by.x = "id2", by.y = "libid") %>%
+  dplyr::select(id1, id2) %>%
+  unlist() %>%
+  unique() %>%
+  sort()
+maskedIdMismatchedSamplesKinship <-
+  rnaseqAnnotationQc$masked_id[
+    rnaseqAnnotationQc$libid %in% libidMismatchedSamplesKinship] %>%
+  unique() %>%
+  sort()
+libidFromMaskedIdMismatchedSamplesKinship <-
+  rnaseqAnnotationQc$libid[
+    rnaseqAnnotationQc$masked_id %in% maskedIdMismatchedSamplesKinship] %>%
+  sort()
+kinshipDataQc %>%
+    mutate(
+      sex_mismatch =
+        ((id1 %in% libidMismatchedSex) | (id2 %in% libidMismatchedSex))) %>%
+  dplyr::mutate(sex_match=!sex_mismatch) %>%
+  dplyr::select(sex_match, kinship_match=kinshipFitsPair) %>%
+  table() %>%
+  prop.table() %>%
+  addmargins()
+# Clustering of mis-matched samples
+kinshipDataQcMismatchedSamplesKinship <-
+  kinshipDataQc %>%
+  dplyr::filter(
+    id1 %in% libidMismatchedSamplesKinship,
+    id2 %in% libidMismatchedSamplesKinship) %>%
+  mutate(id1 = paste(id1, masked_id_1, sep = "_"),
+         id2 = paste(id2, masked_id_2, sep = "_")) %>%
+  dplyr::arrange(id1, id2)
+libidMaskedIdMismatchedSamplesKinship <-
+  paste(
+    libidMismatchedSamplesKinship,
+    rnaseqAnnotation$masked_id[match(libidMismatchedSamplesKinship, rnaseqAnnotation$libid)],
+    sep = "_")
+matrixKinshipMismatchedSamples <-
+  matrix(
+    NA, 
+    nrow = length(libidMaskedIdMismatchedSamplesKinship),
+    ncol = length(libidMaskedIdMismatchedSamplesKinship),
+    dimnames = list(libidMaskedIdMismatchedSamplesKinship, libidMaskedIdMismatchedSamplesKinship))
+for (i in 1:nrow(kinshipDataQcMismatchedSamplesKinship)) {
+  matrixKinshipMismatchedSamples[
+    kinshipDataQcMismatchedSamplesKinship$id2[i], 
+    kinshipDataQcMismatchedSamplesKinship$id1[i]] <-
+    kinshipDataQcMismatchedSamplesKinship$kinship[i]
+}
+matrixKinshipDistMismatchedSamples <- as.dist(1 - matrixKinshipMismatchedSamples)
+hclustKinshipMismatchedSamples <-
+  hclust(matrixKinshipDistMismatchedSamples)
+plot(hclustKinshipMismatchedSamples, 
+     main = "Clustering based on kinship distance", sub = "", xlab = "")
+# Remove problematic libraries
+libidBadKinship <-
+  c("lib30429", "lib30430", "lib30431", "lib30432", "lib30433", "lib30434",
+    "lib30435", "lib30436", "lib30437", "lib30438", "lib30439", "lib30440",
+    "lib30441", "lib30442", "lib30443", "lib30444", "lib30566", "lib35093") %>%
+  sort()
+rnaseqAnnotationQc %>%
+  dplyr::filter(libid %in% libidBadKinship) %>%
+  dplyr::arrange(libid) %>%
+  kable() %>%
+  kable_styling() %>%
+  scroll_box(width = "1000px", height = "400px")
+kinshipDataQcExLibidBadKinship <-
+  kinshipDataQc %>%
+  dplyr::filter(
+    id1 %nin% libidBadKinship,
+    id2 %nin% libidBadKinship)
+rnaseqAnnotationFinal <-
+  rnaseqAnnotationQc %>%
+  dplyr::filter(libid %nin% libidBadKinship)
+metricsFinal <-
+  metricsQc %>%
+  dplyr::filter(libid %in% rnaseqAnnotationFinal$libid)
+rnaseqAnnotationMetricsFinal <-
+  merge(rnaseqAnnotationFinal, metricsFinal)
+# Updated sex and SNP check
+# Sex check after filtering samples
+ggplot(
+  metricsFinal %>%
+    merge(rnaseqAnnotationFinal, by = "libid"),
+  mapping = aes(x = x_counts, y = y_counts, color = sex)) +
+  geom_point(size = 2) +
+  scale_x_log10() + scale_y_log10() +
+  labs(x = "X-chromosome read count", y = "Y-chromosome read count") +
+  scale_color_manual(values = PAL_SEX)
+ggplot(
+  metricsFinal %>%
+    merge(rnaseqAnnotationFinal, by = "libid"),
+  mapping = aes(x = logXyRatio, fill = sex)) +
+  geom_histogram(color = "black", position="dodge") +
+  labs(x = "log ratio of X to Y chromosome reads") +
+  scale_fill_manual(values = PAL_SEX)
+# SNP check after filtering samples
+# plot kinship vs. n_snp, colored by whether subjects are supposed to be the same
+ggplot(
+  kinshipDataQcExLibidBadKinship %>%
+    dplyr::arrange(subjectMatch),
+  # mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = subject)) +
+  # scale_size_manual("Subject", values = c("same"=2, "different"=1)) +
+  mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = kinshipFitsPair)) +
+  scale_size_manual(values = c("FALSE"=2.5, "TRUE"=1)) +
+  guides(size = "none") +
+  scale_color_manual("Subject", values = PAL_SUBJECT_MATCH) +
+  labs(x = "# of overlapping SNPs") +
+  geom_point()
+ggplot(
+  kinshipDataQcExLibidBadKinship %>%
+    dplyr::arrange(subjectMatch),
+  # mapping = aes(x = n_snp, y = kinship, color = subjectMatch, size = subject)) +
+  # scale_size_manual("Subject", values = c("same"=2, "different"=1)) +
+  mapping = aes(x = hethet, y = kinship, color = subjectMatch, size = kinshipFitsPair)) +
+  scale_size_manual(values = c("FALSE"=2.5, "TRUE"=1)) +
+  guides(size = "none") +
+  scale_color_manual("Subject", values = PAL_SUBJECT_MATCH) +
+  labs(x = "Proportion of SNPs with double heterozygotes") +
+  geom_point()
+# Load RNAseq counts
+# read in counts file(s)
+counts <-
+  full_join(
+    read.csv("./raw_data/p264_1_counts.csv"),
+    read.csv("./raw_data/p264_2_counts.csv"))
+# Trim Lib ID's to lib#### (lib plus numbers)
+colnames(counts) <-
+  colnames(counts) %>%
+  str_extract(pattern="lib[0-9]+") %>%
+  make.unique(sep = "_")
+# Keep protein coding genes with HGNC symbols, and drop non-protein-coding genes
+rownames(counts) <- counts[,1]
+counts <- counts[, -1]
+countsToAggregate.tmp <- counts
+countsToAggregate.tmp$HGNC.symbol <-
+  get_HGNC(rownames(countsToAggregate.tmp), type="protein_coding")
+# sum counts for duplicated HGNC symbols
+# this also drops rows with HGNC.symbols==NA, which should include any non-protein-coding genes, as we populated the names
+countsAggregated <-
+  aggregate(
+    countsToAggregate.tmp[,1:(ncol(countsToAggregate.tmp)-1)],
+    by = list(countsToAggregate.tmp$HGNC.symbol), sum)
+rownames(countsAggregated) <-
+  countsAggregated$Group.1
+countsAggregated <-
+  countsAggregated[
+    ,colnames(countsAggregated) != "Group.1"]
+# drop MTRNR2L1 (it's a SNP masquerading as gene counts)
+countsAggregated <-
+  countsAggregated[rownames(countsAggregated) %nin% "MTRNR2L1",]
+countsFinal <-
+  countsAggregated[, match(rnaseqAnnotationFinal$libid, colnames(counts))]
+# Principal component analysis
+# run PCA on the filtered, non-normalized data
+# only need pcaAll for the scores, the SDs, and the plot
+pcaFinal <-
+  calc_PCAs(as.data.frame(countsFinal),
+            log2_transform=TRUE)
+# scree plot, the number of informative PCs = elbow
+plot(pcaFinal, type = "l")
+# 3 highly informative PCs
+# attach sample info to PC scores  
+pcaAnnotationFinal <-
+  merge(rnaseqAnnotationMetricsFinal,
+        as.data.frame(pcaFinal$x),
+        by.x = "libid", by.y = "row.names")
+# Examine correlations of PCs with other variables (demographic, clinical, RNAseq quality)
+# calculate correlations of experimental variables with PCs
+pca_correlations <-
+  calc_PCcors(pcaFinal, annotation=rnaseqAnnotationMetricsFinal)
+# PC1 appears to be correlated with the sample content type (total RNA vs. whole blood), and also with subject and some quality metrics. But the relatively weak correlations suggest that we need primarily to account for the content type batch.
+ggplot(
+  pcaAnnotationFinal,
+  aes(x = PC1, y = PC2, color = masked_id)) + 
+  geom_point(size = 2) +
+  labs(x = pcaFinal$pvars.labs[1], y = pcaFinal$pvars.labs[2])+
+  scale_color_manual(values = big_colorblind_pal(length(unique(pcaAnnotationFinal$masked_id)))) +
+  guides(color = "none")
+ggplot(
+  pcaAnnotationFinal,
+  aes(x = PC1, y = PC2, color = content_type)) + 
+  geom_point(size = 3) +
+  labs(x = pcaFinal$pvars.labs[1], y = pcaFinal$pvars.labs[2])+
+  scale_color_manual(values = PAL_CONTENT_TYPE)
+ggplot(
+  pcaAnnotationFinal,
+  aes(x = PC1, y = PC2, color = lib_prep_batch)) + 
+  geom_point(size = 3) +
+  labs(x = pcaFinal$pvars.labs[1], y = pcaFinal$pvars.labs[2])+
+  scale_color_brewer(type="qual", palette="Set1")
+# Generate batch-corrected counts
+vwtsAll <-
+  calc_norm_counts(
+    counts = countsFinal,
+    design = rnaseqAnnotationFinal, libID_col = "libid",
+    min_cpm = 1, min_libs_perc = 0.15,
+    log2_transform = FALSE,
+    normalize = TRUE,
+    return_DGEcounts = TRUE) %>%
+  voom(plot = TRUE, span = 0.1)
+# remove batch effects by prep, and check if that removes the batch effects
+vwtsBatchRemovedContentType <-
+  removeBatchEffect(
+    vwtsAll,
+    batch = rnaseqAnnotationFinal$content_type,
+    design =
+      model.matrix(
+      ~ treatment_arm + t1d_event + age,
+      data=rnaseqAnnotationFinal))
+# Run PCA after batch correction
+pcaBatchRemovedContentType <-
+  calc_PCAs(vwtsBatchRemovedContentType, cpm = FALSE, log2_transform = FALSE)
+pdatscores.content_type_batch_removed <-
+  merge(
+    rnaseqAnnotationFinal,
+    as.data.frame(
+      pcaBatchRemovedContentType$x),
+    by.x = "libid", by.y = "row.names")
+# Examine correlations of PCs with other variables (demographic, clinical, RNAseq quality)
+# calculate correlations of experimental variables with PCs
+pca_correlations.content_type_batch_removed <-
+  calc_PCcors(pcaBatchRemovedContentType,
+              annotation = rnaseqAnnotationMetricsFinal)
+ggplot(
+  pdatscores.content_type_batch_removed,
+  aes(x = PC1, y = PC2, color = content_type)) + 
+  geom_point(size = 3) +
+  labs(x = pcaFinal$pvars.labs[1], y = pcaFinal$pvars.labs[2])+
+  scale_color_manual(values = PAL_CONTENT_TYPE)
+ggplot(
+  pdatscores.content_type_batch_removed,
+  aes(x = PC1, y = PC2, color = lib_prep_batch)) + 
+  geom_point(size = 3) +
+  labs(x = pcaFinal$pvars.labs[1], y = pcaFinal$pvars.labs[2])+
+  scale_color_brewer(type="qual", palette="Set1")
+# Export data
+# counts matrix
+saveRDS(vwtsBatchRemovedContentType, file = "./saved_data/whole_blood_tn10_counts_data_cleaned.rds")
+# annotation
+write.csv(rnaseqAnnotationMetricsFinal, "./saved_data/whole_blood_tn10_metadata_cleaned.csv")
+
+```

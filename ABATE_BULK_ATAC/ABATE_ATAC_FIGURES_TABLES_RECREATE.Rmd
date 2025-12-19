@@ -58,7 +58,7 @@ logFCcutoff = 0
 
 ```
 
-# Compare open chromatin between CD127+ Tex and CD127- Tex, export differential peaks for HOMER analyses (figure 6B)
+# Compare open chromatin between CD127+ Tex and CD127- Tex, export differential peaks for HOMER analyses
 
 ```{r}
 
@@ -168,12 +168,7 @@ for (iContrast in 1:nrow(contrasts)) {
 }
 names(dge_DP_CD127_pos_vs_DP_CD127_neg) = contrasts$name
 
-```
-
 # Export differential peaks for HOMER analyses
-
-```{r}
-
 for (contrast in names(dge_DP_CD127_pos_vs_DP_CD127_neg)) {
   dge_ = dge_DP_CD127_pos_vs_DP_CD127_neg[[contrast]]
   
@@ -199,6 +194,10 @@ for (contrast in names(dge_DP_CD127_pos_vs_DP_CD127_neg)) {
 }
 
 ```
+
+# Read in HOMER output, plot enrichment of transcription factor motifs in open chromatin between Tex subsets (figure 6B)
+
+# Read in mitochondrial variant counts, plot for CD8 subsets (figure 7C)
 
 # Plot peak scores for open chromatin near cytotoxicity genes for all non-naive CD8s (supplementary figure 8A)
 

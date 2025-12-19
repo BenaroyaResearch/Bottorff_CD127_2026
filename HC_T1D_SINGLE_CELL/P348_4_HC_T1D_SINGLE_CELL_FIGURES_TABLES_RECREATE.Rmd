@@ -1,5 +1,5 @@
 ---
-title: "P348_4 HC & T1D Single Cell"
+title: "Analysis of HC & T1D Single Cell Data"
 output: pdf_document
 ---
 
@@ -33,7 +33,7 @@ filter   <- dplyr::filter
 distinct <- dplyr::distinct
 mutate   <- dplyr::mutate
 
-setwd("/Users/tybottorff/git/Bottorff_CD127_2026/SINGLE_CELL")
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/HC_T1D_SINGLE_CELL/")
 
 theme_minimal_white <- theme_bw(base_size = 14) + 
   theme(
@@ -51,8 +51,8 @@ theme_set(theme_minimal_white)
 
 ```
 
-# NEED TO FILL IN HOW CLUSTERED_CORRECTED_WO_VDJ WAS MADE (COPY FROM BASILIN'S CODE?)
-# Load for now until above filled in
+# Load in quality controlled data (see P348_4_HC_T1D_QC.Rmd)
+
 ```{r}
 
 load("./saved_data/data10x_P348_4_norm_clusterd_corrected_wo_vdj.RData")
