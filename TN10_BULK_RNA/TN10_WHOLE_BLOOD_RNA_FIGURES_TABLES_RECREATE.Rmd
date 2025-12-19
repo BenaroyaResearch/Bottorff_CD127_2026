@@ -45,22 +45,20 @@ setwd("/Users/tybottorff/git/Bottorff_CD127_2026/TN10_BULK_RNA/")
 
 ```
 
-# NEED TO SHOW HOW DATA WAS CLEANED
-
-# Read in TN10 whole blood data
+# Read in TN10 whole blood data post-quality control (see TN10_WHOLE_BLOOD_RNA_QC.Rmd)
 
 ```{r}
 
+# add in new metadata
+additional_metadata <- read_xlsx("./raw_data/full_tn10_times.xlsx") %>%
+  mutate(t1d_event = as.logical(Status)) %>%
+  rename(masked_id = MaskID,
+         months_to_t1d = Time)
 counts_data <- readRDS("./saved_data/whole_blood_tn10_counts_data_cleaned.rds")
 metadata <- read.csv("./saved_data/whole_blood_tn10_metadata_cleaned.csv") %>%
-  select(libid, treatment_arm, visit, t1d_event, age, months_to_t1d, masked_id) %>%
+  select(libid, treatment_arm, visit, age, masked_id) %>%
   filter(visit != "prn") %>%
-  # extend censoring time
-  mutate(months_to_t1d = ifelse(is.na(months_to_t1d), max(months_to_t1d, na.rm = TRUE) + 1, months_to_t1d))
-masked_ids <- metadata %>%
-  group_by(masked_id) %>%
-  dplyr::slice(1) %>%
-  select(-visit, -libid)
+  left_join(additional_metadata, by = "masked_id")
 
 ```
 

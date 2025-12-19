@@ -1,0 +1,199 @@
+---
+title: "Quality control of HC & T1D Single Cell Data"
+output: pdf_document
+---
+
+# Load libraries, mask functions, set theme and directory
+
+```{r}
+
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(stringr)
+library(readxl)
+library(apird)
+library(annotables)
+library(Seurat)
+
+theme_set(
+  theme_bw(20) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour="black", fill=NA, size=1),
+          axis.text=element_text(colour="black"),
+          axis.ticks=element_line(colour="black"),
+          legend.key = element_blank(),
+          strip.text.x = element_text(size = 14,margin = margin( b = 2, t = 2) ),
+            strip.background = element_rect(fill="white", colour="black")))
+
+opts_chunk$set(fig.width=6, fig.height=4.0, cache = TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache.lazy = FALSE, results='hide')
+options(stringsAsFactors = FALSE)
+set.seed(42)
+
+`%notin%` <- Negate(`%in%`)
+select <- dplyr::select
+rename <- dplyr::rename
+filter <- dplyr::filter
+distinct <- dplyr::distinct
+mutate <- dplyr::mutate
+
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/HC_T1D_SINGLE_CELL")
+
+```
+
+# Run quality control, export normalized & clustered data for analysis
+
+```{r}
+
+P348_4_anno <- read.csv("./raw_data/p348_4_anno.csv")
+# download .h5 file from Box/GEO into ./raw_data
+inputData10x <- Seurat::Read10X_h5("./raw_data/P348-4_aggr_filtered_feature_bc_matrix.h5")
+vdj_genes <- annotables::grch38 %>%
+         dplyr::filter(str_detect(biotype, "(TR_[CVDJ]_gene)"))
+# filter gene expression data to include only protein-coding and TCR genes
+biotypeRegex.tmp <-
+  "(protein_coding)|(TR_[CVDJ]_gene)"
+inputData10x_wo_vdj <- inputData10x$`Gene Expression`[
+    rownames(inputData10x$`Gene Expression`) %in% 
+      (annotables::grch38 %>%
+         dplyr::filter(str_detect(biotype, "(protein_coding)")) %>%
+         dplyr::pull(symbol)),]
+inputData10x$`Gene Expression` <-
+  inputData10x$`Gene Expression`[
+    rownames(inputData10x$`Gene Expression`) %in% 
+      (annotables::grch38 %>%
+         dplyr::filter(str_detect(biotype, biotypeRegex.tmp)) %>%
+         dplyr::pull(symbol)),]
+# create Seurat object with RNA and antibody-derived tag data
+data10xUnfiltered_P348_4 <- CreateSeuratObject(counts = inputData10x$`Gene Expression`)
+data10xUnfiltered_P348_4_wo_vdj <- CreateSeuratObject(counts = inputData10x_wo_vdj)
+# Filtering by the same colnames following the gene expression subset 
+inputData10x$`Antibody Capture` <- inputData10x$`Antibody Capture`[, colnames(inputData10x$`Gene Expression`)]
+# fix rownames of ADT data
+rownames(inputData10x$`Antibody Capture`) <-
+  rownames(inputData10x$`Antibody Capture`) %>%
+  str_replace_all("\\.1$", "")
+# add ADT data to Seurat object
+data10xUnfiltered_P348_4[["ADT"]] <- CreateAssayObject(counts = inputData10x$`Antibody Capture`)
+data10xUnfiltered_P348_4_wo_vdj[["ADT"]] <- CreateAssayObject(counts = inputData10x$`Antibody Capture`)
+# Add sampleId as 10X metadata
+# store the colnames as cellBarcode, then split to match the sampleID from P348_3_anno
+data10xUnfiltered_P348_4 <- data10xUnfiltered_P348_4 %>%
+  AddMetaData(
+    metadata = colnames(data10xUnfiltered_P348_4),
+    col.name = "cellBarcode")
+data10xUnfiltered_P348_4_wo_vdj <- data10xUnfiltered_P348_4_wo_vdj %>%
+  AddMetaData(
+    metadata = colnames(data10xUnfiltered_P348_4_wo_vdj),
+    col.name = "cellBarcode")
+# extract sampleID from cellBarcode for downstream plotting and joining with annotation data 
+data10xUnfiltered_P348_4@meta.data$sampleID <- str_extract(data10xUnfiltered_P348_4@meta.data$cellBarcode, '\\b\\w+$')
+data10xUnfiltered_P348_4_wo_vdj@meta.data$sampleID <- str_extract(data10xUnfiltered_P348_4_wo_vdj@meta.data$cellBarcode, '\\b\\w+$')
+# Create anno table with same rownames as data10xUnfiltered_P348_4@meta.data 
+# then join into metadata and it will be the correct order
+P348_4_anno_barcoded <- data10xUnfiltered_P348_4@meta.data %>% select(cellBarcode, sampleID) %>%
+  left_join(., unique(P348_4_anno[,c("sampleID","sample_id","sample_name","studyGroup")]), by = "sampleID")
+P348_4_anno_barcoded_wo_vdj <- data10xUnfiltered_P348_4_wo_vdj@meta.data %>% select(cellBarcode, sampleID) %>%
+  left_join(., unique(P348_4_anno[,c("sampleID","sample_id","sample_name","studyGroup")]), by = "sampleID")
+row.names(P348_4_anno_barcoded) <- row.names(data10xUnfiltered_P348_4@meta.data)
+row.names(P348_4_anno_barcoded_wo_vdj) <- row.names(data10xUnfiltered_P348_4_wo_vdj@meta.data)
+# Add relevant columns of annotation data to metadata
+data10xUnfiltered_P348_4 <- data10xUnfiltered_P348_4 %>% 
+  AddMetaData(
+    metadata = P348_4_anno_barcoded)
+data10xUnfiltered_P348_4_wo_vdj <- data10xUnfiltered_P348_4_wo_vdj %>% 
+  AddMetaData(
+    metadata = P348_4_anno_barcoded_wo_vdj)
+# QC and filtering cells for downstream analysis
+# Check mito counts
+data10xUnfiltered_P348_4[["percent.mt"]] <- PercentageFeatureSet(data10xUnfiltered_P348_4, pattern = "^MT-")
+data10xUnfiltered_P348_4 <-
+  PercentageFeatureSet(data10xUnfiltered_P348_4, "^RP[SL]", col.name = "percent_ribo") # percent ribosomal protein reads
+data10xUnfiltered_P348_4 <-
+  PercentageFeatureSet(data10xUnfiltered_P348_4, "^HB[^(P)]", col.name = "percent_hb") # percent hemoglobin reads
+VlnPlot(data10xUnfiltered_P348_4, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent_ribo","percent_hb"), ncol = 3)
+VlnPlot(data10xUnfiltered_P348_4, features = c("nFeature_RNA","percent.mt"),split.by = 'sampleID')
+plot1 <- FeatureScatter(data10xUnfiltered_P348_4, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(data10xUnfiltered_P348_4, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+data10x_P348_4 <- subset(data10xUnfiltered_P348_4, subset = nFeature_RNA > 100 & nFeature_RNA < 3000 & percent.mt < 15)
+# QC and filtering cells for downstream analysis wo vdj
+# Check mito counts
+data10xUnfiltered_P348_4_wo_vdj[["percent.mt"]] <- PercentageFeatureSet(data10xUnfiltered_P348_4_wo_vdj, pattern = "^MT-")
+data10xUnfiltered_P348_4_wo_vdj <-
+  PercentageFeatureSet(data10xUnfiltered_P348_4_wo_vdj, "^RP[SL]", col.name = "percent_ribo") # percent ribosomal protein reads
+data10xUnfiltered_P348_4_wo_vdj <-
+  PercentageFeatureSet(data10xUnfiltered_P348_4_wo_vdj, "^HB[^(P)]", col.name = "percent_hb") # percent hemoglobin reads
+VlnPlot(data10xUnfiltered_P348_4_wo_vdj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent_ribo","percent_hb"), ncol = 3)
+VlnPlot(data10xUnfiltered_P348_4_wo_vdj, features = c("nFeature_RNA","percent.mt"),split.by = 'sampleID')
+plot1 <- FeatureScatter(data10xUnfiltered_P348_4_wo_vdj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(data10xUnfiltered_P348_4_wo_vdj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+data10x_P348_4_wo_vdj <- subset(data10xUnfiltered_P348_4_wo_vdj, subset = nFeature_RNA > 100 & nFeature_RNA < 3000 & percent.mt < 15)
+# Unintegrated Data
+# Normalize the data
+data10x_P348_4_norm <- NormalizeData(data10x_P348_4, normalization.method = "LogNormalize") 
+data10x_P348_4_norm_wo_vdj <- NormalizeData(data10x_P348_4_wo_vdj, normalization.method = "LogNormalize") 
+# Find variable feature
+data10x_P348_4_norm <- FindVariableFeatures(data10x_P348_4_norm, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(data10x_P348_4_norm), 10)
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(data10x_P348_4_norm)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+# Find variable feature wo vdj
+data10x_P348_4_norm_wo_vdj <- FindVariableFeatures(data10x_P348_4_norm_wo_vdj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(data10x_P348_4_norm_wo_vdj), 10)
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(data10x_P348_4_norm_wo_vdj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+# Scale the Data
+all.genes <- rownames(data10x_P348_4_norm)
+data10x_P348_4_norm <- ScaleData(data10x_P348_4_norm, features = all.genes)
+# Scale the Data
+all.genes_wo_vdj <- rownames(data10x_P348_4_norm_wo_vdj)
+data10x_P348_4_norm_wo_vdj <- ScaleData(data10x_P348_4_norm_wo_vdj, features = all.genes_wo_vdj)
+# Dimension reduction on Unintegrated
+data10x_P348_4_norm <- RunPCA(data10x_P348_4_norm, features = VariableFeatures(object = data10x_P348_4_norm))
+data10x_P348_4_norm_wo_vdj <- RunPCA(data10x_P348_4_norm_wo_vdj, features = VariableFeatures(object = data10x_P348_4_norm_wo_vdj))
+# Cluster the cells
+data10x_P348_4_norm_clusterd <- FindNeighbors(data10x_P348_4_norm, dims = 1:30)
+data10x_P348_4_norm_clusterd <- FindClusters(data10x_P348_4_norm_clusterd, resolution = 1,cluster.name = "unintegrated_clusters")
+# Cluster the cells no vdj
+data10x_P348_4_norm_wo_vdj_clusterd <- FindNeighbors(data10x_P348_4_norm_wo_vdj, dims = 1:30)
+data10x_P348_4_norm_wo_vdj_clusterd <- FindClusters(data10x_P348_4_norm_wo_vdj_clusterd, resolution = 1,cluster.name = "unintegrated_clusters")
+# Make Umap
+data10x_P348_4_norm_clusterd <- RunUMAP(data10x_P348_4_norm_clusterd, dims = 1:30,reduction.name = "umap.unintegrated")
+data10x_P348_4_norm_wo_vdj_clusterd <- RunUMAP(data10x_P348_4_norm_wo_vdj_clusterd, dims = 1:30,reduction.name = "umap.unintegrated")
+DimPlot(data10x_P348_4_norm_clusterd, reduction = "umap.unintegrated")
+DimPlot(data10x_P348_4_norm_clusterd, label = TRUE, group.by = c("sampleID", "seurat_clusters","studyGroup"))
+DimPlot(data10x_P348_4_norm_clusterd, label = TRUE, group.by = "studyGroup")
+DimPlot(data10x_P348_4_norm_wo_vdj_clusterd, reduction = "umap.unintegrated")
+DimPlot(data10x_P348_4_norm_wo_vdj_clusterd, label = TRUE, group.by = c("sampleID", "seurat_clusters","studyGroup"))
+DimPlot(data10x_P348_4_norm_wo_vdj_clusterd, label = TRUE, group.by = "studyGroup")
+# There is a Batch effect so let run integration on the data
+data10x_P348_4_norm_clusterd_corrected <- data10x_P348_4_norm_clusterd
+data10x_P348_4_norm_clusterd_corrected[["RNA"]] <- split(data10x_P348_4_norm_clusterd_corrected[["RNA"]], f = data10x_P348_4_norm_clusterd_corrected$sampleID)
+data10x_P348_4_norm_clusterd_corrected <- IntegrateLayers(object = data10x_P348_4_norm_clusterd_corrected, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
+                                                          assay = "RNA",
+    verbose=TRUE)
+# re-join layers after integration
+data10x_P348_4_norm_clusterd_corrected[["RNA"]] <- JoinLayers(data10x_P348_4_norm_clusterd_corrected[["RNA"]])
+# There is a Batch effect so let run integration on the data wo vdj
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- data10x_P348_4_norm_wo_vdj_clusterd
+rm(data10x_P348_4_norm_wo_vdj_clusterd)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj[["RNA"]] <- split(data10x_P348_4_norm_clusterd_corrected_wo_vdj[["RNA"]], f = data10x_P348_4_norm_clusterd_corrected_wo_vdj$sampleID)
+data10x_P348_4_norm_clusterd_corrected_wo_vdj <- IntegrateLayers(object = data10x_P348_4_norm_clusterd_corrected_wo_vdj, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
+                                                          assay = "RNA",
+    verbose=TRUE)
+# re-join layers after integration
+data10x_P348_4_norm_clusterd_corrected_wo_vdj[["RNA"]] <- JoinLayers(data10x_P348_4_norm_clusterd_corrected_wo_vdj[["RNA"]])
+# export data to analyze
+save(data10x_P348_4_norm_clusterd_corrected_wo_vdj, file = "./saved_data/data10x_P348_4_norm_clusterd_corrected_wo_vdj.RData")
+
+```
