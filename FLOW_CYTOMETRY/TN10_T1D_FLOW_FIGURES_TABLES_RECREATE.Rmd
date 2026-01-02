@@ -187,7 +187,88 @@ eight_clusters <- read_xlsx("./raw_data/flow_clustering.xlsx") %>%
 
 ```
 
-# Stratify participants by 3-month frequencies of each cluster separately to compare T1D-free intervals (supplementary figure 2A)
+# Stratify participants by baseline frequencies of each cluster separately to compare T1D-free intervals (supplementary figure 2A)
+
+```{r}
+
+marker_cols <- c(
+  "metacluster_1",
+  "metacluster_2",
+  "metacluster_3",
+  "metacluster_4",
+  "metacluster_5",
+  "metacluster_6",
+  "metacluster_7",
+  "metacluster_8"
+)
+visit_keep <- "baseline"
+top_n      <- 11
+cols = c("#302583", "#302584", "#37773C", "#37773D", "#D9CB82", "#D9CB81", "#BF6E7B", "#BF6E7A", "#95CAE8", "#95CAE9", "#61A898", "#61A899", "#9E4C94", "#9E4C95", "#7D2B53", "#7D2B54")
+run_one <- function(marker_col, cluster_idx){
+  df_base <- eight_clusters %>%
+    filter(Visit == visit_keep,
+           !is.na(Treatment_Arm),
+           !is.na(.data[[marker_col]]))
+  tez <- df_base %>% filter(Treatment_Arm == "Teplizumab")
+  top_idx <- order(tez[[marker_col]], decreasing = TRUE)[seq_len(min(top_n, nrow(tez)))]
+  tez$group <- "Tep lo"
+  tez$group[top_idx] <- "Tep hi"
+  df_base$group <- NA_character_
+  df_base$group[df_base$Treatment_Arm == "Placebo"]    <- "Placebo"
+  df_base$group[df_base$Treatment_Arm == "Teplizumab"] <- tez$group
+  df_base$group <- factor(df_base$group,
+                          levels = c("Tep hi","Tep lo","Placebo"))
+  fit <- survfit(Surv(Time.to.Disease, T1D.event) ~ group, data = df_base)
+  current_hi_col <- cols[(cluster_idx-1)*2 + 1]
+  current_lo_col <- cols[(cluster_idx-1)*2 + 2]
+  p <- ggsurvplot(
+    fit,
+    data = df_base,
+    risk.table = TRUE,
+    break.time.by = 12,
+    xlab = "Months",
+    ylab = "% T1D free",
+    palette = c(current_hi_col, current_lo_col, "grey"),
+    linetype = c("solid", "dotted", "solid"),
+    fun = function(x) x * 100,
+    risk.table.height = 0.45,
+    surv.plot.height  = 0.55,
+    risk.table.fontsize = 5,
+    tables.theme = theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+  )
+  pdf(file = paste0("./figures/", "supp_fig_2A_", marker_col, ".pdf"), width = 3, height = 5)
+  print(p)
+  dev.off()
+  # stats
+  sdiff <- pairwise_survdiff(
+    Surv(Time.to.Disease, T1D.event) ~ group,
+    data = df_base,
+    p.adjust.method = "none"
+  )
+  list(
+    marker = marker_col,
+    pairwise = sdiff,
+    top_vs_placebo =
+      survdiff(Surv(Time.to.Disease, T1D.event) ~
+                 factor(group %in% c("Tep hi","Placebo"),
+                        levels = c(FALSE, TRUE)),
+               data = df_base),
+    bot23_vs_placebo =
+      survdiff(Surv(Time.to.Disease, T1D.event) ~
+                 factor(group %in% c("Tep lo","Placebo"),
+                        levels = c(FALSE, TRUE)),
+               data = df_base)
+  )
+}
+results_list <- map2(marker_cols, seq_along(marker_cols), run_one)
+
+```
+
+# Stratify participants by 3-month frequencies of each cluster separately to compare T1D-free intervals (supplementary figure 2B)
 
 ```{r}
 
@@ -240,7 +321,7 @@ run_one <- function(marker_col, cluster_idx){
       axis.text = element_text(size = 20),
       axis.title = element_text(size = 24))
   )
-  pdf(file = paste0("./figures/", "supp_fig_2A_", marker_col, ".pdf"), width = 3, height = 5)
+  pdf(file = paste0("./figures/", "supp_fig_2B_", marker_col, ".pdf"), width = 3, height = 5)
   print(p)
   dev.off()
   # stats
@@ -1317,12 +1398,13 @@ ggsave("./figures/supp_fig_5B.pdf", supp_fig_5B, width = 4, height = 3)
 ```{r}
 
 skim_by_age <- read_xlsx("./raw_data/skim_by_age.xlsx") %>%
-  mutate(age_group = if_else(Age < 30, "<30", ">=30"))
+  mutate(age_group = if_else(Age < 30, "<30", ">=30")) %>%
+  # AbATE data doesn't add
+  filter(Dataset == "TN10")
 supp_fig_4A <- skim_by_age %>%
   ggplot(aes(
     x = Age,
     y = `TIGIT-KLRG1+CD127+_baseline`,
-    color = Dataset
   )) +
   geom_point(size = 2) +
   geom_smooth(
@@ -1347,7 +1429,7 @@ summary(model_ge30)
 
 ```
 
-# Stratify participants by age to compare T1D-free intervals (supplementary figure 4C)
+# Stratify participants by age to compare T1D-free intervals (supplementary figure 4B)
 
 ```{r}
 
@@ -1391,7 +1473,7 @@ supp_fig_4C <- ggsurvplot(
       axis.title = element_text(size = 24))
 )
 supp_fig_4C
-pdf("./figures/supp_fig_4C.pdf", width = 3, height = 5)
+pdf("./figures/supp_fig_4B.pdf", width = 3, height = 5)
 print(supp_fig_4C)
 dev.off()
 age_df_stats <- age_df %>%

@@ -7,7 +7,7 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Load necessary libraries
+# Load necessary libraries, set theme and path
 
 ```{r}
 
@@ -39,6 +39,19 @@ library(SummarizedExperiment)
 library(edgeR)
 library(limma)
 library(statmod)
+library(rvest)
+library(UpSetR)
+
+options(stringsAsFactors = FALSE)
+set.seed(42)
+
+`%notin%` <- Negate(`%in%`)
+
+select   <- dplyr::select
+rename   <- dplyr::rename
+filter   <- dplyr::filter
+distinct <- dplyr::distinct
+mutate   <- dplyr::mutate
 
 theme_set(
   theme_bw(20) +
@@ -55,6 +68,7 @@ pcutoff = 0.1
 logPcutoff = -log10(pcutoff)
 logFCcutoff = 0
 
+setwd("/Users/tybottorff/git/Bottorff_CD127_2026/ABATE_BULK_ATAC/")
 
 ```
 
@@ -190,14 +204,406 @@ for (contrast in names(dge_DP_CD127_pos_vs_DP_CD127_neg)) {
   bed$Chr = paste("chr", bed$Chr, sep = "")
   # use consensus OCRs (open chromatin regions) from all non-naive CD8s as background for HOMER
   write.table(dplyr::select(bed, peakID, Chr, Start, End, strand), file = dataDir("DP_CD127_pos_vs_DP_CD127_neg_all_peaks.txt"), sep="\t", quote=F, row.names=F, col.names=F)
-
 }
 
 ```
 
-# Read in HOMER output, plot enrichment of transcription factor motifs in open chromatin between Tex subsets (figure 6B)
+# Read in HOMER output, plot enrichment of transcription factor motifs in open chromatin between Tex subsets (figure 6B, supplementary data 3)
 
-# Read in mitochondrial variant counts, plot for CD8 subsets (figure 7C)
+```{r}
+
+# look at both directions of a comparison and, for each motif, to take the side that's its more signfiicant on (sometimes end up with same motif called "enriched" on both sides of a comparison due to comparison being to background of all consensus peaks)
+# look at both known and de novo motifs
+known_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background <- read.table("./saved_data/DP_CD127_pos_vs_DP_PD1_pos_background_all_peaks_homer/knownResults.txt", header = TRUE, row.names = NULL) %>%
+  dplyr::rename(pval = Name,
+         perc_targets_with_motif = P.value.1,
+         perc_background_with_motif = X.Benjamini.,
+         num_targets_with_motif = Log,
+         num_background_with_motif = q.value,
+         full_motif_name = row.names,
+         motif_seq = Motif,
+         qval = P.value) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, num_targets_with_motif, perc_targets_with_motif, num_background_with_motif, perc_background_with_motif) %>%
+  mutate(source = "known")
+de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background_html <- read_html("./saved_data/DP_CD127_pos_vs_DP_PD1_pos_background_all_peaks_homer/homerResults.html")
+de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background_tables <- html_table(de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background_html, header = TRUE)
+de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background <- de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background_tables[[1]] %>%
+  dplyr::rename(pval = `P-value`,
+         perc_targets_with_motif = `% of Targets`,
+         perc_background_with_motif = `% of Background`,
+         motif_seq = Motif,
+         full_motif_name = `Best Match/Details`) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, perc_targets_with_motif, perc_background_with_motif) %>%
+  mutate(source = "de_novo")
+motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background <- known_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background %>%
+  full_join(de_novo_motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background) %>%
+  mutate(enrichment = "DP CD127+")
+known_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background <- read.table("./saved_data/DP_PD1_pos_vs_DP_CD127_pos_background_all_peaks_homer/knownResults.txt", header = TRUE, row.names = NULL) %>%
+  dplyr::rename(pval = Name,
+         perc_targets_with_motif = P.value.1,
+         perc_background_with_motif = X.Benjamini.,
+         num_targets_with_motif = Log,
+         num_background_with_motif = q.value,
+         full_motif_name = row.names,
+         motif_seq = Motif,
+         qval = P.value) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, num_targets_with_motif, perc_targets_with_motif, num_background_with_motif, perc_background_with_motif) %>%
+  mutate(source = "known")
+de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background_html <- read_html("./saved_data/DP_PD1_pos_vs_DP_CD127_pos_background_all_peaks_homer/homerResults.html")
+de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background_tables <- html_table(de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background_html, header = TRUE)
+de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background <- de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background_tables[[1]] %>%
+  dplyr::rename(pval = `P-value`,
+         perc_targets_with_motif = `% of Targets`,
+         perc_background_with_motif = `% of Background`,
+         motif_seq = Motif,
+         full_motif_name = `Best Match/Details`) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, perc_targets_with_motif, perc_background_with_motif) %>%
+  mutate(source = "de_novo")
+motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background <- known_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background %>%
+  full_join(de_novo_motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background) %>%
+  mutate(enrichment = "DP PD-1+")
+joined_dp_cd127_vs_dp_pd1_motifs <- motifs_dp_pd1_pos_vs_dp_cd127_pos_all_peaks_background %>%
+  full_join(motifs_dp_cd127_pos_vs_dp_pd1_pos_all_peaks_background) %>%
+  # take only 1 hit per motif (whatever side of contrast it was more strongly enriched)
+  group_by(short_motif_name) %>%
+  arrange(pval) %>%
+  dplyr::slice(1) %>%
+  ungroup() %>%
+  # remove cols with data not present in all dfs
+  select(-num_targets_with_motif, -num_background_with_motif) %>%
+  # if perc_background_with_motifs = 0%, make it 0.01% to get FCs
+  mutate(perc_background_with_motif = ifelse(perc_background_with_motif == "0.00%", "0.01%", perc_background_with_motif)) %>%
+  mutate(fold_change = ifelse(enrichment == "DP CD127+", 
+                            -log2(as.numeric(gsub("%", "", perc_targets_with_motif)) / as.numeric(gsub("%", "", perc_background_with_motif))),
+                            log2(as.numeric(gsub("%", "", perc_targets_with_motif)) / as.numeric(gsub("%", "", perc_background_with_motif))))) %>%
+  mutate(fold_change = if_else(perc_targets_with_motif == "0.00%", 0, fold_change)) %>%
+  filter(abs(fold_change) > 0)
+known_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background <- read.table("./saved_data/DP_CD127_pos_vs_DP_CD57_pos_background_all_peaks_homer/knownResults.txt", header = TRUE, row.names = NULL) %>%
+  dplyr::rename(pval = Name,
+         perc_targets_with_motif = P.value.1,
+         perc_background_with_motif = X.Benjamini.,
+         num_targets_with_motif = Log,
+         num_background_with_motif = q.value,
+         full_motif_name = row.names,
+         motif_seq = Motif,
+         qval = P.value) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, num_targets_with_motif, perc_targets_with_motif, num_background_with_motif, perc_background_with_motif) %>%
+  mutate(source = "known")
+de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background_html <- read_html("./saved_data/DP_CD127_pos_vs_DP_CD57_pos_background_all_peaks_homer/homerResults.html")
+de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background_tables <- html_table(de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background_html, header = TRUE)
+de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background <- de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background_tables[[1]] %>%
+  dplyr::rename(pval = `P-value`,
+         perc_targets_with_motif = `% of Targets`,
+         perc_background_with_motif = `% of Background`,
+         motif_seq = Motif,
+         full_motif_name = `Best Match/Details`) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, perc_targets_with_motif, perc_background_with_motif) %>%
+  mutate(source = "de_novo")
+motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background <- known_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background %>%
+  full_join(de_novo_motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background) %>%
+  mutate(enrichment = "DP CD127+")
+known_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background <- read.table("./saved_data/DP_CD57_pos_vs_DP_CD127_pos_background_all_peaks_homer/knownResults.txt", header = TRUE, row.names = NULL) %>%
+  dplyr::rename(pval = Name,
+         perc_targets_with_motif = P.value.1,
+         perc_background_with_motif = X.Benjamini.,
+         num_targets_with_motif = Log,
+         num_background_with_motif = q.value,
+         full_motif_name = row.names,
+         motif_seq = Motif,
+         qval = P.value) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, num_targets_with_motif, perc_targets_with_motif, num_background_with_motif, perc_background_with_motif) %>%
+  mutate(source = "known")
+de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background_html <- read_html("./saved_data/DP_CD57_pos_vs_DP_CD127_pos_background_all_peaks_homer/homerResults.html")
+de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background_tables <- html_table(de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background_html, header = TRUE)
+de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background <- de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background_tables[[1]] %>%
+  dplyr::rename(pval = `P-value`,
+         perc_targets_with_motif = `% of Targets`,
+         perc_background_with_motif = `% of Background`,
+         motif_seq = Motif,
+         full_motif_name = `Best Match/Details`) %>%
+  mutate(short_motif_name = str_split(full_motif_name, "/") %>% sapply(`[[`, 1)) %>%
+  select(short_motif_name, pval, motif_seq, perc_targets_with_motif, perc_background_with_motif) %>%
+  mutate(source = "de_novo")
+motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background <- known_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background %>%
+  full_join(de_novo_motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background) %>%
+  mutate(enrichment = "DP CD57+")
+joined_dp_cd127_vs_dp_cd57_motifs <- motifs_dp_cd57_pos_vs_dp_cd127_pos_all_peaks_background %>%
+  full_join(motifs_dp_cd127_pos_vs_dp_cd57_pos_all_peaks_background) %>%
+  # take only 1 hit per motif (whatever side of contrast it was more strongly enriched)
+  group_by(short_motif_name) %>%
+  arrange(pval) %>%
+  dplyr::slice(1) %>%
+  ungroup() %>%
+  # remove cols with data not present in all dfs
+  select(-num_targets_with_motif, -num_background_with_motif) %>%
+  # if perc_background_with_motifs = 0%, make it 0.01% to get FCs
+  mutate(perc_background_with_motif = ifelse(perc_background_with_motif == "0.00%", "0.01%", perc_background_with_motif)) %>%
+  mutate(fold_change = ifelse(enrichment == "DP CD127+", 
+                            -log2(as.numeric(gsub("%", "", perc_targets_with_motif)) / as.numeric(gsub("%", "", perc_background_with_motif))),
+                            log2(as.numeric(gsub("%", "", perc_targets_with_motif)) / as.numeric(gsub("%", "", perc_background_with_motif))))) %>%
+  mutate(fold_change = if_else(perc_targets_with_motif == "0.00%", 0, fold_change)) %>%
+  filter(abs(fold_change) > 0)
+df1 <- joined_dp_cd127_vs_dp_cd57_motifs |>
+  dplyr::mutate(comparison = "CD127+ Tex vs. CD57+ Tex")
+df2 <- joined_dp_cd127_vs_dp_pd1_motifs |>
+  dplyr::mutate(comparison = "CD127+ Tex vs. PD-1+ Tex")
+plot_df <- dplyr::bind_rows(df1, df2) %>%
+  mutate(
+    enrichment = as.character(enrichment),
+    enrichment = case_when(
+      pval > 0.05 | abs(fold_change) < 1 ~ "NS",
+      enrichment == "DP CD127+" ~ "CD127+ Tex",
+      enrichment == "DP PD-1+" ~ "PD-1+ Tex",
+      enrichment == "DP CD57+" ~ "CD57+ Tex"
+      ),
+    # clean motif names first
+    short_motif_name_clean = sub("[\\(.].*$", "", short_motif_name) |> trimws(),
+    source = case_when(
+      source == "de_novo" ~ "de novo",
+      source == "known" ~ "known"
+    ))
+labeled_df <- plot_df %>%
+  filter(enrichment != "NS") %>%
+  group_by(comparison, sign(fold_change)) %>%
+  slice_min(pval, n = 5) %>%
+  ungroup()
+fig6B <- ggplot(plot_df, aes(
+  x = fold_change,
+  y = -log10(pval),
+  color = enrichment
+)) +
+  geom_point(alpha = 0.75, size = 1.25) +
+  geom_text_repel(
+  data = labeled_df,
+  aes(
+    x = fold_change,
+    y = -log10(pval),
+    label = short_motif_name_clean,
+    color = enrichment
+  ),
+  inherit.aes = FALSE,
+  size = 4,
+  box.padding = 0.22,
+  point.padding = 0.2,
+  max.overlaps = 9
+  ) +
+  scale_color_manual(values = c(
+    "CD127+ Tex" = "#BF6E7A",
+    "CD57+ Tex"  = "#302583",
+    "PD-1+ Tex"  = "#37773C",
+    "NS"        = "grey80"
+  )) +
+  labs(
+    x = "Enrichment of motif in\ntarget over background (log2)",
+    y = "-log10(p-value)",
+    color = "Enrichment"
+  ) +
+  facet_wrap(~comparison) +
+  theme(legend.text = element_text(size = 10),
+        legend.title = element_text(size = 12),
+        strip.text = element_text(size = 9))
+fig6B
+ggsave("./figures/fig6B.pdf", fig6B, width = 6, height = 3)
+write.csv(plot_df, "./saved_data/supp_data_3.csv", row.names = FALSE)
+
+```
+
+# Read in mitochondrial variant counts, plot quality control tests (supplementary figure 7)
+
+```{r}
+
+dir_path <- "/Users/tybottorff/mounts/workspace/tbottorff/P576-1/saved_data/"
+file_list <- list.files(path = dir_path, pattern = "^merged_mt_.*\\.txt$", full.names = TRUE)
+has_content <- function(file_path) {
+  length(readLines(file_path)) > 1
+}
+filtered_file_list <- file_list[sapply(file_list, has_content)]
+read_and_label <- function(file_path) {
+  data <- read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+  data$file_name <- basename(file_path)
+  data$libid <- str_extract(data$file_name, "lib[0-9]+")
+  data$min_coverage <- as.numeric(str_extract(data$file_name, "(?<=coverage)\\d+"))
+  data$p_value <- as.numeric(str_replace(str_extract(data$file_name, "(?<=pvalue)[0-9]+_[0-9]+"), "_", "."))
+  data$min_var_freq <- as.numeric(str_replace(str_extract(data$file_name, "(?<=minvarfreq)[0-9]+_[0-9]+"), "_", "."))
+  return(data)
+}
+labeled_data_list <- lapply(filtered_file_list, read_and_label)
+combined_data <- do.call(rbind, labeled_data_list)
+# get these downstream but using them now
+vars_present_in_all_sorts_in_donors <- read.csv("./saved_data/vars_in_all_sorts.csv") %>%
+  select(var_id) %>%
+  rename(donor_position_allele_id = var_id)
+public_vars <- read.csv("./saved_data/public_vars.csv") %>%
+  select(var_id) %>%
+  rename(position_allele_id = var_id)
+metadata <- read.csv("./saved_data/metadata.csv") %>%
+  # fix donorId...
+  mutate(donorId = paste("00", donorId, sep = ""))
+mt_var_data <- combined_data %>%
+  left_join(design %>% dplyr::select(libid, donorId, sort, responder), by = "libid") %>%
+  left_join(metadata, by = c("donorId", "responder")) %>%
+  # many to many warning in left_join expected
+  dplyr::rename(Chromosome = Chrom,
+         Reference_allele = Ref,
+         Consensus_genotype = Cons,
+         Reads_supporting_ref_allele = Reads1,
+         Reads_supporting_var_allele = Reads2,
+         ref_allele_strands = Strands1,
+         var_allele_strands = Strands2,
+         avg_base_qual_of_ref_supporting_read_bases = Qual1,
+         avg_base_qual_of_var_supporting_read_bases = Qual2,
+         avg_map_qual_of_ref_reads = MapQual1,
+         avg_map_qual_of_var_reads = MapQual2,
+         ref_supporting_reads_on_plus_strand = Reads1Plus,
+         ref_supporting_reads_on_minus_strand = Reads1Minus,
+         var_supporting_reads_on_plus_strand = Reads2Plus,
+         var_supporting_reads_on_minus_strand = Reads2Minus,
+         most_freq_var_allele = VarAllele,
+         Var_perc = VarFreq) %>%
+  # apply filtering steps to avoid false positive vars, as done in https://elifesciences.org/articles/45105#s4
+  dplyr::filter(!(Position %in% c(302:316, 513:525, 3105:3110)),
+         var_supporting_reads_on_plus_strand > 2,
+         var_supporting_reads_on_minus_strand > 2,
+         ref_supporting_reads_on_plus_strand > 2,
+         ref_supporting_reads_on_minus_strand > 2,
+         # strand balance check
+         var_supporting_reads_on_plus_strand / (var_supporting_reads_on_plus_strand + var_supporting_reads_on_minus_strand) > 0.3,
+         var_supporting_reads_on_plus_strand / (var_supporting_reads_on_plus_strand + var_supporting_reads_on_minus_strand) < 0.7,
+         ref_supporting_reads_on_plus_strand / (ref_supporting_reads_on_plus_strand + ref_supporting_reads_on_minus_strand) > 0.3,
+         ref_supporting_reads_on_plus_strand / (ref_supporting_reads_on_plus_strand + ref_supporting_reads_on_minus_strand) < 0.7) %>%
+  mutate(Var_perc = as.numeric(gsub("%", "", Var_perc)),
+         sort = case_when(
+           sort == "TIGIT-\nKLRG1-" ~ "DN",
+           sort == "(TIGIT+KLRG1+)-\nCD127+" ~ "non-exhausted CD127+",
+           sort == "TIGIT+KLRG1+\nCD57-CD127+" ~ "DP CD127+",
+           sort == "TIGIT+KLRG1+\nCD57+CD127-" ~ "DP CD57+",
+           sort == "TIGIT+KLRG1+\nCD57-CD127-PD1+" ~ "DP PD-1+")) %>%
+  # remove vars present in all donors in a sort
+  mutate(donor_position_allele_id = paste(donorId, Position, most_freq_var_allele, sep = ", "),
+         position_allele_id = paste(Position, most_freq_var_allele, sep = ", ")) %>%
+  filter(!(donor_position_allele_id %in% vars_present_in_all_sorts_in_donors$donor_position_allele_id),
+         !(position_allele_id %in% public_vars$position_allele_id))
+hv1_start <- 16024
+hv1_end <- 16383
+hv2_start <- 57
+hv2_end <- 372
+supp_fig_6A <- ggplot(data = mt_var_data, aes(x = Position)) +
+  geom_histogram(binwidth = 250) +
+  labs(x = "Position", y = "Number of variants") +
+  geom_vline(xintercept = c(hv1_start, hv1_end), color = "red", linetype = "dashed") +
+  geom_vline(xintercept = c(hv2_start, hv2_end), color = "blue", linetype = "dashed")
+supp_fig_6A
+ggsave("./figures/supp_fig_6A.pdf", supp_fig_6A, width = 5, height = 5)
+
+
+
+mt_var_data$arbitrary_id <- as.numeric(factor(mt_var_data$donorId, levels = unique(mt_var_data$donorId)))
+upset_mt_var_data_2 <- mt_var_data %>%
+  filter(p_value == 0.05, min_coverage == 20, min_var_freq == 0.003) %>%
+  group_by(Position, most_freq_var_allele) %>%
+  summarize(donors = list(unique(arbitrary_id)), .groups = 'drop') %>%
+  unnest(donors) %>%
+  mutate(value = 1) %>%
+  pivot_wider(names_from = donors, values_from = value, values_fill = list(value = 0))
+supp_fig_6B <- upset(as.data.frame(upset_mt_var_data_2), sets = setdiff(colnames(upset_mt_var_data_2), c("sort", "Position", "most_freq_var_allele")), sets.bar.color = "#56B4E9", sets.x.label = "MT SNV counts", mainbar.y.label = "MT SNV sharing across donors", point.size = 1.5, show.numbers = FALSE, text.scale = 1)
+supp_fig_6B
+pdf("./figures/supp_fig_6B.pdf", height = 4.5, width = 5)
+print(p)
+invisible(dev.off())
+# this is where public variants CSV came from
+public_vars <- upset_mt_var_data_2 %>%
+  filter(`1` + `2` + `3` + `4` + `5` + `6` + `7` + `8` + `9` + `10` > 1) %>%
+  mutate(var_id = paste(Position, most_freq_var_allele, sep = ", "))
+#write.csv(public_vars, "./saved_data/public_vars.csv")
+# this is where variants in all cell populations CSV came from
+vars_present_in_all_sorts_in_donors <- upset_mt_var_data %>%
+  filter(`DP CD127+` + `non-exhausted CD127+` + `DN` + `DP CD57+` + `DP PD-1+` == 5) %>%
+  mutate(var_id = paste(donorId, Position, most_freq_var_allele, sep = ", "))
+#write.csv(vars_present_in_all_sorts_in_donors, "./saved_data/vars_in_all_sorts.csv")
+
+```
+
+
+# Plot mitochondrial variant counts for CD8 subsets (figure 7C)
+
+```{r}
+
+count_data <- mt_var_data %>%
+  filter(p_value %in% c(0.05), min_var_freq %in% c(0.003), min_coverage %in% c(20)) %>%
+  mutate(var_perc_category = case_when(
+    Var_perc <= 25 ~ "< 5%",
+    Var_perc > 5 & Var_perc <= 99 ~ "25-99%",
+    Var_perc > 99 ~ "> 99%")) %>%
+    mutate(var_perc_category = factor(var_perc_category, levels = c("< 5%", "5-25%", "25-99%", "> 99%"))) %>%
+  group_by(min_coverage, p_value, min_var_freq, sort, donorId, responder, var_perc_category) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  mutate(key = "A")
+count_data_all <- count_data %>%
+  group_by(min_coverage, p_value, min_var_freq, sort, donorId, responder) %>%
+  summarize(count = sum(count), var_perc_category = "All", .groups = "drop") %>%
+  mutate(key = "B")
+summed_data <- bind_rows(count_data, count_data_all) %>%
+  mutate(var_perc_category = factor(var_perc_category, levels = c("All", "< 5%", "5-25%", "25-99%", "> 99%")))
+summed_data$sort <- factor(summed_data$sort, levels = c("non-exhausted CD127+", "DN", "DP CD127+", "DP PD-1+", "DP CD57+"))
+p_values_summary <- summed_data %>%
+  group_by(min_var_freq, var_perc_category) %>%
+  group_modify(~ {
+    res <- perform_wilcox_tests(.x)
+    res %>%
+      mutate(p_adjusted = p.adjust(p_value, method = "BH"))
+  }) %>%
+  ungroup() %>%
+  arrange(p_adjusted)
+custom_labeller <- function(var_perc_category) {
+  paste("Variant freq:", var_perc_category)
+}
+custom_labels <- c(
+  "< 5%" = "Rare variants",
+  "> 99%" = "Common variants"
+)
+summed_data <- summed_data %>%
+  mutate(
+    sort = case_when(
+      sort == "DN" ~ "TIGIT-KLRG1-",
+      sort == "DP CD127+" ~ "CD127+ Tex",
+      sort == "DP PD-1+" ~ "PD-1+ Tex",
+      sort == "DP CD57+" ~ "CD57+ Tex",
+      TRUE ~ sort
+    ),
+    sort = factor(
+      sort,
+      levels = c(
+        "non-exhausted CD127+",
+        "TIGIT-KLRG1-",
+        "CD127+ Tex",
+        "PD-1+ Tex",
+        "CD57+ Tex"
+      )
+    )
+  )
+colors <- c("#9E4C95", "#7D2B54", "#BF6E7A", "#37773C", "#302583")
+names(colors) <- c("TIGIT-KLRG1-", "non-exhausted CD127+", "CD127+ Tex", "PD-1+ Tex", "CD57+ Tex")
+fig7C <- ggplot(summed_data %>% dplyr::filter(var_perc_category %in% c("< 5%", "> 99%")), aes(x = sort, y = count, fill = sort)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_beeswarm(size = 0.25, alpha = 0.5) +
+  geom_line(aes(group = donorId), color = "grey", alpha = 0.5, size = 0.5) +
+  facet_wrap(~ var_perc_category, ncol = 2, labeller = labeller(var_perc_category = custom_labels)) +
+  theme(axis.text.x = element_text(size = 9, angle = 45, hjust = 1), strip.text = element_text(size = 10), axis.title.y = element_text(size = 12), axis.text.y = element_text(size = 10),
+        legend.position = "none") +
+  labs(x = "", y = "MT sequence\nvariant count", fill = "Population") +
+  scale_fill_manual(values = colors) +
+  guides(fill = guide_legend(nrow = 3, byrow = TRUE))
+fig7C
+ggsave("../figures/fig7C.pdf", plot = fig7C, width = 3.5, height = 3.5)
+
+```
 
 # Plot peak scores for open chromatin near cytotoxicity genes for all non-naive CD8s (supplementary figure 8A)
 
