@@ -722,8 +722,8 @@ cluster_pal <- c(
   "8" = "#7D2B54"
 )
 V(network_graph)$color <- cluster_pal[V(network_graph)$name]
-# scale nodes by the number of rare mitochondrial variants, when possible (otherwise use 8)
-V(network_graph)$size <- c(18.8, 12, 8, 4.29, 8, 5.33)*2
+# scale nodes by the mean number of rare mitochondrial variants, when possible (otherwise use 2)
+V(network_graph)$size <- c(5.6, 3.5, 2, 1.44, 2, 1.62)*6
 eps <- 1e-6
 E(network_graph)$width <- ifelse(
   is.na(E(network_graph)$expansion_score),
@@ -757,5 +757,97 @@ plot(
   edge.color = "black"
 )
 dev.off()
+
+```
+
+# Calculate expression of public Tc17 module in each cluster (figure 2F)
+
+```{r}
+
+# gene list comes from supplementary table 2 from PMID 34914499
+tc17 = c("RORC", "ZBTB16", "CEBPD", "RORA", "NR1D1", "CCL20", "CD40LG", "LTB", "TNFSF13B", "IL26", "IL17A", "FLT3LG", "TNF", "IL23A", "CCR6", "IL23R", "IL7R", "IL17RE", "IL18RAP", "SLC4A10", "KLRB1", "TMIGD2", "IL4I1", "NCR3", "LTK", "CA2", "ME1", "AQP3", "ADAM12")
+DefaultAssay(data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT) <- "RNA"
+expr_mat <- GetAssayData(
+  data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT,
+  layer = "data"
+)
+genes_use <- intersect(tc17, rownames(expr_mat))
+meta_rna <- data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data %>%
+  dplyr::select(sampleID, cluster = ADT_snn_res.0.4) %>%
+  mutate(cluster = case_when(
+    cluster == "5" ~ "4",
+    cluster == "1" ~ "2",
+    cluster == "4" ~ "1",
+    cluster == "0" ~ "8",
+    cluster == "2" ~ "7",
+    cluster == "7" ~ "5",
+    TRUE ~ cluster
+  ))
+pb_rna <- meta_rna %>%
+  cbind(t(expr_mat[genes_use, , drop = FALSE])) %>%
+  pivot_longer(cols = all_of(genes_use), names_to = "gene", values_to = "expr") %>%
+  group_by(sampleID, cluster) %>%
+  summarise(module_expr = mean(expr), .groups = "drop")
+cluster_cols <- c(
+  "1"="#302583","2"="#37773C","3"="#D9CB81","4"="#BF6E7A",
+  "5"="#95CAE9","6"="#61A899","7"="#9E4C95","8"="#7D2B54"
+)
+fig2F <- ggplot(pb_rna, aes(x=factor(cluster), y=module_expr, fill=factor(cluster))) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, size = 0.6) +
+  scale_fill_manual(values = cluster_cols) +
+  labs(
+    x = "Cluster",
+    y = "Mean RNA\nexpression\nof Tc17 module"
+  )
+fig2F
+ggsave(
+  "./figures/fig2F.pdf",
+  width = 6,
+  height = 2.5
+)
+```
+
+# Calculate expression of public terminal Tex module in each cluster (figure 6A)
+
+```{r}
+
+# gene list comes from supplementary table 2 from PMID 34914499
+terminal_tex = c("RBPJ", "ETV1", "TOX", "ZBED2", "TOX2", "CXCL13", "TNFSF4", "FAM3C", "GZMB", "CSF1", "CCL3", "CD70", "IFNG", "NAMPT", "FASLG", "IL2RA", "CXCR6", "CD74", "IL2RB", "IL2RG", "TNFRSF9", "LAYN", "ENTPD1", "HAVCR2", "CTLA4", "KRT86", "TNFRSF18", "GEM", "TIGIT", "DUSP4")
+genes_use <- intersect(terminal_tex, rownames(expr_mat))
+meta_rna <- data10x_P348_4_norm_clusterd_corrected_wo_vdj_subset_ADT@meta.data %>%
+  dplyr::select(sampleID, cluster = ADT_snn_res.0.4) %>%
+  mutate(cluster = case_when(
+    cluster == "5" ~ "4",
+    cluster == "1" ~ "2",
+    cluster == "4" ~ "1",
+    cluster == "0" ~ "8",
+    cluster == "2" ~ "7",
+    cluster == "7" ~ "5",
+    TRUE ~ cluster
+  ))
+pb_rna <- meta_rna %>%
+  cbind(t(expr_mat[genes_use, , drop = FALSE])) %>%
+  pivot_longer(cols = all_of(genes_use), names_to = "gene", values_to = "expr") %>%
+  group_by(sampleID, cluster) %>%
+  summarise(module_expr = mean(expr), .groups = "drop")
+cluster_cols <- c(
+  "1"="#302583","2"="#37773C","3"="#D9CB81","4"="#BF6E7A",
+  "5"="#95CAE9","6"="#61A899","7"="#9E4C95","8"="#7D2B54"
+)
+fig6A <- ggplot(pb_rna, aes(x=factor(cluster), y=module_expr, fill=factor(cluster))) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, size = 0.6) +
+  scale_fill_manual(values = cluster_cols) +
+  labs(
+    x = "Cluster",
+    y = "Mean RNA\nexpression\nof terminal\nTex module"
+  )
+fig6A
+ggsave(
+  "./figures/fig6A.pdf",
+  width = 6.5,
+  height = 2.5
+)
 
 ```

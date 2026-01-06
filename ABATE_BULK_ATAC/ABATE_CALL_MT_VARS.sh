@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing the .bam files
-bam_dir="/mnt/bioinformatics/workspace/tbottorff/P576-1/raw_data/combined_bams/"
+bam_dir="./raw_data/"
 
 # Output directory
 output_dir="./saved_data/"
@@ -13,9 +13,9 @@ min_coverage_values=(20)
 p_value_thresholds=(0.05)
 
 # Array of min-var-freq values, ~0.5/num_samples
-min_var_freq_values=(0.004)
+min_var_freq_values=(0.003)
 
-# Reference genome file
+# Reference genome file, will need to download one
 reference_genome="/mnt/bioinformatics/pipeline/annotation/GRCh38/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 
 # Iterate through all .bam files in the directory
