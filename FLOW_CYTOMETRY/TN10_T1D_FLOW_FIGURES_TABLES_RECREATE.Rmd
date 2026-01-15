@@ -161,7 +161,9 @@ p_bot <- {
 pvals <- tibble(
   comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
   logrank_p = c(p_top, p_bot)
-)
+) %>%
+# adjust pvals
+  mutate(p_adj = p.adjust(logrank_p, method = "BH"))
 pvals
 
 ```
@@ -428,7 +430,7 @@ dev.off()
 pairwise_pvals <- pairwise_survdiff(
   Surv(Time.to.Disease, T1D.event) ~ group,
   data = df_base,
-  p.adjust.method = "none"
+  p.adjust.method = "BH"
 )
 pairwise_pvals
 
@@ -685,7 +687,7 @@ dev.off()
 pairwise_pvals <- pairwise_survdiff(
   Surv(Time.to.Disease, T1D.event) ~ group,
   data = df_base,
-  p.adjust.method = "none"
+  p.adjust.method = "BH"
 )
 pairwise_pvals
 
@@ -881,7 +883,7 @@ supp_fig_6B <- ggsurvplot(
       axis.text = element_text(size = 20),
       axis.title = element_text(size = 24)))
 supp_fig_6B
-pairwise_survdiff(Surv(Time.to.Disease, T1D.event) ~ group, data = df_cd127, p.adjust.method = "none")
+pairwise_survdiff(Surv(Time.to.Disease, T1D.event) ~ group, data = df_cd127, p.adjust.method = "BH")
 pdf("./figures/supp_fig_6B.pdf", width = 3, height = 5)
 print(supp_fig_6B)
 dev.off()
@@ -1427,7 +1429,7 @@ ggsave("./figures/supp_fig_5B.pdf", supp_fig_5B, width = 4, height = 3)
 
 ```
 
-# Plot baseline SKIM frequency vs. age (supplementary figure 4A)
+# Plot baseline SKIM frequency vs. age (supplementary figure 5A)
 
 ```{r}
 
@@ -1435,7 +1437,7 @@ skim_by_age <- read_xlsx("./raw_data/skim_by_age.xlsx") %>%
   mutate(age_group = if_else(Age < 30, "<30", ">=30")) %>%
   # AbATE data doesn't add
   filter(Dataset == "TN10")
-supp_fig_4A <- skim_by_age %>%
+supp_fig_5A <- skim_by_age %>%
   ggplot(aes(
     x = Age,
     y = `TIGIT-KLRG1+CD127+_baseline`,
@@ -1449,8 +1451,8 @@ supp_fig_4A <- skim_by_age %>%
     linewidth = 1
   ) +
   labs(y = "Baseline SKIM\nfrequency (% CD8)")
-supp_fig_4A
-ggsave("./figures/supp_fig_4A.pdf", width = 5, height = 3)
+supp_fig_5A
+ggsave("./figures/supp_fig_5A.pdf", width = 5, height = 3)
 # stats
 # <30
 model_lt30 <- lm(`TIGIT-KLRG1+CD127+_baseline` ~ Age,
@@ -1463,7 +1465,7 @@ summary(model_ge30)
 
 ```
 
-# Stratify participants by age to compare T1D-free intervals (supplementary figure 4B)
+# Stratify participants by age to compare T1D-free intervals (supplementary figure 5B)
 
 ```{r}
 
@@ -1483,7 +1485,7 @@ age_df <- tex_subsets <- read_xlsx("./raw_data/tex_subsets.xlsx") %>%
     )
   )
 surv_obj <- survfit(Surv(`Time.to.T1D (months)`, T1D.event) ~ strata, data = age_df)
-supp_fig_4C <- ggsurvplot(
+supp_fig_5B <- ggsurvplot(
   fit = survfit(Surv(`Time.to.T1D (months)`, T1D.event) ~ strata, data = age_df),
   data = age_df,
   palette = c("red", "blue", "grey", "purple"), 
@@ -1506,9 +1508,9 @@ supp_fig_4C <- ggsurvplot(
       axis.text = element_text(size = 20),
       axis.title = element_text(size = 24))
 )
-supp_fig_4C
-pdf("./figures/supp_fig_4B.pdf", width = 3, height = 5)
-print(supp_fig_4C)
+supp_fig_5B
+pdf("./figures/supp_fig_5B.pdf", width = 3, height = 5)
+print(supp_fig_5B)
 dev.off()
 age_df_stats <- age_df %>%
   rename(time_to_t1d = `Time.to.T1D (months)`)

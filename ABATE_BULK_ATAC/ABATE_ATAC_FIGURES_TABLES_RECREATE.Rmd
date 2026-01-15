@@ -219,7 +219,7 @@ for (contrast in names(dge_DP_CD127_pos_vs_DP_CD127_neg)) {
 
 ```
 
-# Read in HOMER output, plot enrichment of transcription factor motifs in open chromatin between Tex subsets (figure 6B, supplementary data 3)
+# Read in HOMER output, plot enrichment of transcription factor motifs in open chromatin between Tex subsets (figure 6C, supplementary data 3)
 
 ```{r}
 
@@ -385,7 +385,7 @@ labeled_df <- plot_df %>%
   group_by(comparison, sign(fold_change)) %>%
   slice_min(pval, n = 5) %>%
   ungroup()
-fig6B <- ggplot(plot_df, aes(
+fig6C <- ggplot(plot_df, aes(
   x = fold_change,
   y = -log10(pval),
   color = enrichment
@@ -420,13 +420,13 @@ fig6B <- ggplot(plot_df, aes(
   theme(legend.text = element_text(size = 10),
         legend.title = element_text(size = 12),
         strip.text = element_text(size = 9))
-fig6B
-ggsave("./figures/fig6B.pdf", fig6B, width = 6, height = 3)
+fig6C
+ggsave("./figures/fig6C.pdf", fig6C, width = 6, height = 3)
 write.csv(plot_df, "./saved_data/supp_data_3.csv", row.names = FALSE)
 
 ```
 
-# Read in mitochondrial variant counts, plot quality control tests (supplementary figure 7)
+# Read in mitochondrial variant counts, plot quality control tests (supplementary figure 8)
 
 ```{r}
 
@@ -505,13 +505,13 @@ hv1_start <- 16024
 hv1_end <- 16383
 hv2_start <- 57
 hv2_end <- 372
-supp_fig_6A <- ggplot(data = mt_var_data, aes(x = Position)) +
+supp_fig_8A <- ggplot(data = mt_var_data, aes(x = Position)) +
   geom_histogram(binwidth = 250) +
   labs(x = "Position", y = "Number of variants") +
   geom_vline(xintercept = c(hv1_start, hv1_end), color = "red", linetype = "dashed") +
   geom_vline(xintercept = c(hv2_start, hv2_end), color = "blue", linetype = "dashed")
-supp_fig_6A
-ggsave("./figures/supp_fig_6A.pdf", supp_fig_6A, width = 5, height = 5)
+supp_fig_8A
+ggsave("./figures/supp_fig_8A.pdf", supp_fig_8A, width = 5, height = 5)
 mt_var_data$arbitrary_id <- as.numeric(factor(mt_var_data$donorId, levels = unique(mt_var_data$donorId)))
 upset_mt_var_data_2 <- mt_var_data %>%
   group_by(Position, most_freq_var_allele) %>%
@@ -519,10 +519,10 @@ upset_mt_var_data_2 <- mt_var_data %>%
   unnest(donors) %>%
   mutate(value = 1) %>%
   pivot_wider(names_from = donors, values_from = value, values_fill = list(value = 0))
-supp_fig_6B <- upset(as.data.frame(upset_mt_var_data_2), sets = setdiff(colnames(upset_mt_var_data_2), c("sort", "Position", "most_freq_var_allele")), sets.bar.color = "#56B4E9", sets.x.label = "MT SNV counts", mainbar.y.label = "MT SNV sharing across donors", point.size = 1.5, show.numbers = FALSE, text.scale = 1)
-supp_fig_6B
-pdf("./figures/supp_fig_6B.pdf", height = 4.5, width = 5)
-print(supp_fig_6B)
+supp_fig_8B <- upset(as.data.frame(upset_mt_var_data_2), sets = setdiff(colnames(upset_mt_var_data_2), c("sort", "Position", "most_freq_var_allele")), sets.bar.color = "#56B4E9", sets.x.label = "MT SNV counts", mainbar.y.label = "MT SNV sharing across donors", point.size = 1.5, show.numbers = FALSE, text.scale = 1)
+supp_fig_8B
+pdf("./figures/supp_fig_8B.pdf", height = 4.5, width = 5)
+print(supp_fig_8B)
 invisible(dev.off())
 # this is where public variants CSV came from
 public_vars <- upset_mt_var_data_2 %>%
@@ -637,7 +637,7 @@ p_values_summary <- summed_data %>%
 
 ```
 
-# Plot peak scores for open chromatin near cytotoxicity genes for all non-naive CD8s (supplementary figure 8A)
+# Plot peak scores for open chromatin near cytotoxicity genes for all non-naive CD8s (supplementary figure 7A)
 
 ```{r}
 
@@ -864,12 +864,12 @@ for (contrast in names(dge_grouped)[1]) {
   ha <- HeatmapAnnotation(df = list(group = design_grouped_$sort[order_index]), 
                           col = list(group = colors.sort)
                           )
-  supp_fig_8A = Heatmap(tp, show_column_names = FALSE, show_row_names = TRUE, 
+  supp_fig_7A = Heatmap(tp, show_column_names = FALSE, show_row_names = TRUE, 
                cluster_columns = FALSE, name = "scaled\nlog2\npeak score", 
                top_annotation = ha, col = col_fun, cluster_rows = FALSE, show_row_dend = TRUE, column_title = "", row_title = "Cytotoxicity OCRs", row_names_gp = gpar(fontsize = 10), row_title_gp = gpar(fontsize = 20), heatmap_legend_param = list(title = "scaled\nlog2\npeak score", title_gp = gpar(fontsize = 20), labels_gp = gpar(fontsize = 20)), row_split = gene_set_labels$geneSet)
-  plot(supp_fig_8A)
-  pdf("./figures/supp_fig_8A.pdf", height = 7, width = 7.5)
-  print(supp_fig_8A)
+  plot(supp_fig_7A)
+  pdf("./figures/supp_fig_7A.pdf", height = 7, width = 7.5)
+  print(supp_fig_7A)
   invisible(dev.off())
 }
 

@@ -760,7 +760,7 @@ dev.off()
 
 ```
 
-# Calculate expression of public Tc17 module in each cluster (figure 2F)
+# Calculate expression of public Tc17 module in each cluster (figure 2E)
 
 ```{r}
 
@@ -792,7 +792,7 @@ cluster_cols <- c(
   "1"="#302583","2"="#37773C","3"="#D9CB81","4"="#BF6E7A",
   "5"="#95CAE9","6"="#61A899","7"="#9E4C95","8"="#7D2B54"
 )
-fig2F <- ggplot(pb_rna, aes(x=factor(cluster), y=module_expr, fill=factor(cluster))) +
+fig2E <- ggplot(pb_rna, aes(x=factor(cluster), y=module_expr, fill=factor(cluster))) +
   geom_boxplot(outlier.shape = NA) +
   geom_jitter(width = 0.15, size = 0.6) +
   scale_fill_manual(values = cluster_cols) +
@@ -800,9 +800,9 @@ fig2F <- ggplot(pb_rna, aes(x=factor(cluster), y=module_expr, fill=factor(cluste
     x = "Cluster",
     y = "Mean RNA\nexpression\nof Tc17 module"
   )
-fig2F
+fig2E
 ggsave(
-  "./figures/fig2F.pdf",
+  "./figures/fig2E.pdf",
   width = 6,
   height = 2.5
 )

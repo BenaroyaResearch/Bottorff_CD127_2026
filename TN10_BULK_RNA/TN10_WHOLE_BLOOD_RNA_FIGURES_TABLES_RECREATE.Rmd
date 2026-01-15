@@ -62,7 +62,7 @@ metadata <- read.csv("./saved_data/whole_blood_tn10_metadata_cleaned.csv") %>%
 
 ```
 
-# Stratify participants by baseline whole blood transcript levels of a public MAIT module to compare T1D-free intervals (figure 2E)
+# Stratify participants by baseline whole blood transcript levels of a public MAIT module to compare T1D-free intervals (figure 2F, left)
 
 ```{r}
 
@@ -106,7 +106,7 @@ surv_obj <- survfit(
   Surv(months_to_t1d, t1d_event) ~ strata,
   data = km_df_mait
 )
-fig2E <- ggsurvplot(
+fig2F_left <- ggsurvplot(
   fit = surv_obj,
   data = km_df_mait,
   palette = c("#FF0000", "#FF0001", "grey"),
@@ -131,9 +131,9 @@ fig2E <- ggsurvplot(
       axis.title = element_text(size = 24)
     )
 )
-fig2E
-pdf("./figures/fig2E.pdf", width = 4, height = 5)
-print(fig2E)
+fig2F_left
+pdf("./figures/fig2F_left.pdf", width = 4, height = 5)
+print(fig2F_left)
 dev.off()
 # stats
 p_top <- {
@@ -149,11 +149,12 @@ p_bot <- {
 tibble(
   comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
   logrank_p = c(p_top, p_bot)
-)
+) %>%
+  mutate(padj = p.adjust(logrank_p, method = "BH"))
 
 ```
 
-# Stratify participants by baseline whole blood transcript levels of a public Tc17 module to compare T1D-free intervals (figure 2G)
+# Stratify participants by baseline whole blood transcript levels of a public Tc17 module to compare T1D-free intervals (figure 2F, right)
 
 ```{r}
 
@@ -189,7 +190,7 @@ surv_obj <- survfit(
   Surv(months_to_t1d, t1d_event) ~ strata,
   data = km_df_tc17
 )
-fig2G <- ggsurvplot(
+fig2F_right <- ggsurvplot(
   fit = surv_obj,
   data = km_df_tc17,
   palette = c("#FF0000", "#FF0001", "grey"),
@@ -214,9 +215,9 @@ fig2G <- ggsurvplot(
       axis.title = element_text(size = 24)
     )
 )
-fig2G
-pdf("./figures/fig2G.pdf", width = 4, height = 5)
-print(fig2G)
+fig2F_right
+pdf("./figures/fig2F_right.pdf", width = 4, height = 5)
+print(fig2F_right)
 dev.off()
 # stats
 p_top <- {
@@ -232,11 +233,12 @@ p_bot <- {
 tibble(
   comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
   logrank_p = c(p_top, p_bot)
-)
+) %>%
+  mutate(padj = p.adjust(logrank_p, method = "BH"))
 
 ```
 
-# Stratify participants by baseline whole blood transcript levels of a public Tc17 module to compare T1D-free intervals (supplementary figure 5C)
+# Stratify participants by baseline whole blood transcript levels of KLRB1 to compare T1D-free intervals (supplementary figure 4A)
 
 ```{r}
 
@@ -268,7 +270,7 @@ surv_obj <- survfit(
   Surv(months_to_t1d, t1d_event) ~ strata,
   data = km_df_klrb1
 )
-fig2E_right <- ggsurvplot(
+supp_4A <- ggsurvplot(
   fit = surv_obj,
   data = km_df_klrb1,
   palette = c("#0000FF", "#0000FE", "grey"),
@@ -293,9 +295,9 @@ fig2E_right <- ggsurvplot(
       axis.title = element_text(size = 24)
     )
 )
-fig2E_right
-pdf("./figures/fig2E_right.pdf", width = 4, height = 5)
-print(fig2E_right)
+supp_4A
+pdf("./figures/supp_4A.pdf", width = 4, height = 5)
+print(supp_4A)
 dev.off()
 # stats
 p_top <- {
@@ -311,11 +313,12 @@ p_bot <- {
 tibble(
   comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
   logrank_p = c(p_top, p_bot)
-)
+) %>%
+  mutate(padj = p.adjust(logrank_p, method = "BH"))
 
 ```
 
-# Plot baseline KLRB1 expression vs. age and vs. baseline SKIM %
+# Plot baseline KLRB1 expression vs. age and vs. baseline SKIM % (supplementary figure 4B)
 
 ```{r}
 
@@ -344,7 +347,7 @@ data_with_meta_with_skim_perc <- data_with_meta %>%
     treatment_arm == "placebo" ~ "Placebo")) %>%
   left_join(skim_perc, by = c("masked_id", "treatment_arm")) %>%
   filter(treatment_arm == "Teplizumab")
-supp_fig_5A <- ggplot(data_with_meta_with_skim_perc, aes(x = baseline_ime, y = klrb1)) +
+supp_fig_4B <- ggplot(data_with_meta_with_skim_perc, aes(x = baseline_ime, y = klrb1)) +
   geom_point(size = 2) +
   geom_smooth(aes(color = NULL), method = "lm", se = FALSE) + 
   stat_cor(method = "pearson", 
@@ -354,7 +357,176 @@ supp_fig_5A <- ggplot(data_with_meta_with_skim_perc, aes(x = baseline_ime, y = k
        y = "Baseline KLRB1\ntranscript level",
        color = "Treatment",
        shape = "T1D Event")
-supp_fig_5A
-ggsave("./figures/supp_fig_5A.pdf", supp_fig_5A, width = 5, height = 4)
+supp_fig_4B
+ggsave("./figures/supp_fig_4B.pdf", supp_fig_4B, width = 5, height = 4)
+
+```
+
+# Stratify participants by baseline whole blood transcript levels of a public IL7 signaling module to compare T1D-free intervals (supplementary figure 5D)
+
+```{r}
+
+process_sheet <- function(sheet_name) {
+  df <- read_xlsx("./raw_data/cui_2024_cytokine_mouse_dict_scrnaseq.xlsx", sheet = sheet_name) %>%
+    # filter for genes upregulated with IL-7 treatment (vs. PBS vehicle)
+    filter(Cytokine == "IL-7", FDR < 0.05, Avg_log2FC > 1) %>%
+    mutate(sheet_name = sheet_name)
+  return(df)}
+sheet_names <- excel_sheets("./raw_data/cui_2024_cytokine_mouse_dict_scrnaseq.xlsx")
+immune_dict <- lapply(sheet_names, process_sheet) %>%
+  bind_rows() %>%
+  select(Celltype, Cytokine, Gene, Avg_log2FC, FDR, Pct_Cytokine, Pct_PBS)
+il7_genes <- immune_dict %>% pull(Gene) %>% toupper()
+meta_base <- metadata %>%
+  filter(visit == "baseline")
+# compute IL7 module score (mean expression per library)
+il7_expr <- counts_data[rownames(counts_data) %in% il7_genes, , drop = FALSE]
+il7_score <- colMeans(il7_expr)
+km_df_il7 <- meta_base %>%
+  left_join(
+    tibble(libid = names(il7_score),
+           module_expression = il7_score),
+    by = "libid"
+  )
+km_df_il7 <- km_df_il7 %>%
+  mutate(
+    strata = case_when(
+      treatment_arm == "placebo" ~ "Placebo",
+      treatment_arm == "teplizumab" &
+        module_expression >= quantile(
+          module_expression[treatment_arm == "teplizumab"],
+          probs = 2/3, na.rm = TRUE
+        ) ~ "Top1/3",
+      treatment_arm == "teplizumab" ~ "Bottom2/3"
+    )
+  )
+km_df_il7$strata <- factor(
+  km_df_il7$strata,
+  levels = c("Top1/3", "Bottom2/3", "Placebo")
+)
+surv_obj <- survfit(
+  Surv(months_to_t1d, t1d_event) ~ strata,
+  data = km_df_il7
+)
+supp_5D_left <- ggsurvplot(
+  fit = surv_obj,
+  data = km_df_il7,
+  palette = c("#FF0000", "#FF0001", "grey"),
+  linetype = c("solid", "dotted", "solid"),
+  risk.table = TRUE,
+  xlab = "Months",
+  ylab = "% T1D Free",
+  ylim = c(0, 100),
+  fun = function(x) x * 100,
+  break.time.by = 12,
+  risk.table.height = 0.35,
+  surv.plot.height  = 0.65,
+  risk.table.fontsize = 5,
+  tables.theme = theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    axis.text  = element_text(size = 20),
+    axis.title = element_text(size = 24)
+  ) +
+    theme(
+      axis.text  = element_text(size = 20),
+      axis.title = element_text(size = 24)
+    )
+)
+supp_5D_left
+pdf("./figures/supp_5D_left.pdf", width = 4, height = 5)
+print(supp_5D_left)
+dev.off()
+# stats
+p_top <- {
+  df <- km_df_il7 %>% filter(strata %in% c("Placebo", "Top1/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+p_bot <- {
+  df <- km_df_il7 %>% filter(strata %in% c("Placebo", "Bottom2/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+tibble(
+  comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
+  logrank_p = c(p_top, p_bot)
+) %>%
+  mutate(padj = p.adjust(logrank_p, method = "BH"))
+cd8_il7_genes <- immune_dict %>% filter(Celltype == "CD8+ T cell") %>% pull(Gene) %>% toupper()
+# compute IL7 module score (mean expression per library)
+il7_expr <- counts_data[rownames(counts_data) %in% cd8_il7_genes, , drop = FALSE]
+il7_score <- colMeans(il7_expr)
+km_df_il7 <- meta_base %>%
+  left_join(
+    tibble(libid = names(il7_score),
+           module_expression = il7_score),
+    by = "libid"
+  )
+km_df_il7 <- km_df_il7 %>%
+  mutate(
+    strata = case_when(
+      treatment_arm == "placebo" ~ "Placebo",
+      treatment_arm == "teplizumab" &
+        module_expression >= quantile(
+          module_expression[treatment_arm == "teplizumab"],
+          probs = 2/3, na.rm = TRUE
+        ) ~ "Top1/3",
+      treatment_arm == "teplizumab" ~ "Bottom2/3"
+    )
+  )
+km_df_il7$strata <- factor(
+  km_df_il7$strata,
+  levels = c("Top1/3", "Bottom2/3", "Placebo")
+)
+surv_obj <- survfit(
+  Surv(months_to_t1d, t1d_event) ~ strata,
+  data = km_df_il7
+)
+supp_5D_right <- ggsurvplot(
+  fit = surv_obj,
+  data = km_df_il7,
+  palette = c("#FF0000", "#FF0001", "grey"),
+  linetype = c("solid", "dotted", "solid"),
+  risk.table = TRUE,
+  xlab = "Months",
+  ylab = "% T1D Free",
+  ylim = c(0, 100),
+  fun = function(x) x * 100,
+  break.time.by = 12,
+  risk.table.height = 0.35,
+  surv.plot.height  = 0.65,
+  risk.table.fontsize = 5,
+  tables.theme = theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    axis.text  = element_text(size = 20),
+    axis.title = element_text(size = 24)
+  ) +
+    theme(
+      axis.text  = element_text(size = 20),
+      axis.title = element_text(size = 24)
+    )
+)
+supp_5D_right
+pdf("./figures/supp_5D_right.pdf", width = 4, height = 5)
+print(supp_5D_right)
+dev.off()
+# stats
+p_top <- {
+  df <- km_df_il7 %>% filter(strata %in% c("Placebo", "Top1/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+p_bot <- {
+  df <- km_df_il7 %>% filter(strata %in% c("Placebo", "Bottom2/3"))
+  sd <- survdiff(Surv(months_to_t1d, t1d_event) ~ strata, data = df)
+  pchisq(sd$chisq, df = length(sd$n) - 1, lower.tail = FALSE)
+}
+tibble(
+  comparison = c("Placebo vs Top1/3", "Placebo vs Bottom2/3"),
+  logrank_p = c(p_top, p_bot)
+) %>%
+  mutate(padj = p.adjust(logrank_p, method = "BH"))
 
 ```
