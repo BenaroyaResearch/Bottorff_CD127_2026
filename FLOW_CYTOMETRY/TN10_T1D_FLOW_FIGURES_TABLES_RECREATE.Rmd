@@ -381,7 +381,7 @@ stats_df <- tibble(
 
 ```
 
-# Stratify participants by 3-month frequencies of clusters 1-4 combined (Tex) to compare T1D-free intervals (figure 1C)
+# Stratify participants by 3-month frequencies of clusters 1-4 combined (Tex) to compare T1D-free intervals (supplementary figure X)
 
 ```{r}
 
@@ -423,9 +423,9 @@ fig1C <- ggsurvplot(
       axis.text = element_text(size = 20),
       axis.title = element_text(size = 24))
 )
-fig1C
-pdf("./figures/fig1C.pdf", width = 3, height = 5)
-print(fig1C)
+supp_fig_X
+pdf("./figures/supp_fig_X.pdf", width = 3, height = 5)
+print(supp_fig_X)
 dev.off()
 pairwise_pvals <- pairwise_survdiff(
   Surv(Time.to.Disease, T1D.event) ~ group,
