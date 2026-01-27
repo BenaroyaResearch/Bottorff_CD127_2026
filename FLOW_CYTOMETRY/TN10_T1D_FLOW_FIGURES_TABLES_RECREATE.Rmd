@@ -401,7 +401,7 @@ df_base$group[df_base$Treatment_Arm == "Teplizumab"] <- tez$group
 df_base$group <- factor(df_base$group, levels = c("Tep hi", "Tep lo", "Placebo"))
 surv_obj <- Surv(time = df_base$Time.to.Disease, event = df_base$T1D.event)
 fit <- survfit(surv_obj ~ group, data = df_base)
-fig1C <- ggsurvplot(
+supp_fig_X <- ggsurvplot(
   fit,
   data = df_base,
   risk.table = TRUE,
