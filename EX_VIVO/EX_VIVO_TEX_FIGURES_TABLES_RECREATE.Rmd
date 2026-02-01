@@ -15,6 +15,7 @@ library(readxl)
 library(dplyr)
 library(ggplot2)
 library(cowplot)
+library(tidyr)
 
 options(stringsAsFactors = FALSE)
 set.seed(42)
@@ -72,15 +73,64 @@ fig_6E <- plot_grid(
 fig_6E
 ggsave("./figures/6E.pdf", fig_6E, width = 6.5, height = 3.5)
 # stats
-prolif_test <- with(
-  prolif_wide,
-  t.test(`CD127-`, `CD127+`, paired = TRUE)
+prolif_wide <- df_prolif %>%
+  select(pairing, group, value) %>%
+  pivot_wider(
+    names_from  = group,
+    values_from = value
+  ) %>%
+  drop_na(`CD127-`, `CD127+`)
+ifng_wide <- df_ifng %>%
+  select(pairing, group, value) %>%
+  pivot_wider(
+    names_from  = group,
+    values_from = value
+  ) %>%
+  drop_na(`CD127-`, `CD127+`)
+# paired t-tests
+prolif_test <- t.test(
+  prolif_wide$`CD127-`,
+  prolif_wide$`CD127+`,
+  paired = TRUE
 )
-ifng_test <- with(
-  ifng_wide,
-  t.test(`CD127-`, `CD127+`, paired = TRUE)
+ifng_test <- t.test(
+  ifng_wide$`CD127-`,
+  ifng_wide$`CD127+`,
+  paired = TRUE
 )
 prolif_test
 ifng_test
 
+```
+
+# Compare lymphodepletion vs. baseline SKIM frequencies (supplementary figure 5C)
+
+```{r}
+
+lymphodepletion_df <- read_xlsx("./raw_data/skim_lymphodepletion.xlsx")
+ct <- cor.test(
+  lymphodepletion_df$perc_skim_at_baseline,
+  lymphodepletion_df$Day_5_lymphodepletion,
+  method = "spearman"  # or "pearson"
+)
+p_lab <- paste0(
+  "rho = ", round(ct$estimate, 2),
+  "\nP = ", signif(ct$p.value, 2)
+)
+supp_fig_5C <- ggplot(lymphodepletion_df, aes(x = perc_skim_at_baseline, y = Day_5_lymphodepletion)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  annotate(
+    "text",
+    x = Inf, y = Inf,
+    label = p_lab,
+    hjust = 1.1, vjust = 1.1,
+    size = 3.5
+  ) +
+  labs(
+    x = "SKIM at baseline (%)",
+    y = "Lymphocyte count\n(% baseline, day 5)"
+  )
+supp_fig_5C
+ggsave("./figures/supp_fig_5C.pdf", supp_fig_5C, width = 4, height = 3)
 ```
