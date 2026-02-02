@@ -108,29 +108,55 @@ ifng_test
 ```{r}
 
 lymphodepletion_df <- read_xlsx("./raw_data/skim_lymphodepletion.xlsx")
-ct <- cor.test(
-  lymphodepletion_df$perc_skim_at_baseline,
-  lymphodepletion_df$Day_5_lymphodepletion,
-  method = "spearman"  # or "pearson"
-)
-p_lab <- paste0(
-  "rho = ", round(ct$estimate, 2),
-  "\nP = ", signif(ct$p.value, 2)
-)
-supp_fig_5C <- ggplot(lymphodepletion_df, aes(x = perc_skim_at_baseline, y = Day_5_lymphodepletion)) +
-  geom_point(size = 2) +
-  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
-  annotate(
-    "text",
-    x = Inf, y = Inf,
-    label = p_lab,
-    hjust = 1.1, vjust = 1.1,
-    size = 3.5
-  ) +
-  labs(
-    x = "SKIM at baseline (%)",
-    y = "Lymphocyte count\n(% baseline, day 5)"
+long_df <- lymphodepletion_df %>%
+  pivot_longer(
+    cols = -c(donor_id, perc_skim_baseline),
+    names_to = "day",
+    values_to = "freq"
+  ) %>%
+  mutate(
+    day = as.numeric(day)
   )
+# define terciles on baseline skim
+cut <- quantile(long_df$perc_skim_baseline, probs = 2/3, na.rm = TRUE)
+long_df <- long_df %>%
+  mutate(
+    skim_group = if_else(
+      perc_skim_baseline > cut,
+      "SKIM hi",
+      "SKIM lo"
+    )
+  )
+# summary stats per group x day
+sum_df <- long_df %>%
+  group_by(skim_group, day) %>%
+  summarise(
+    mean = mean(freq, na.rm = TRUE),
+    se   = sd(freq, na.rm = TRUE) / sqrt(sum(!is.na(freq))),
+    .groups = "drop"
+  )
+supp_fig_5C <- ggplot(sum_df, aes(day, mean, color = skim_group)) +
+  geom_errorbar(
+    aes(ymin = mean - se, ymax = mean + se),
+    width = 5,
+    linewidth = 0.7
+  ) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1) +
+  scale_x_continuous(breaks = sort(unique(sum_df$day))) +
+  labs(
+    x = "Day",
+    y = "Lymphocyte count\n(% baseline)",
+    color = ""
+  ) +
+  scale_x_continuous(
+  breaks = c(1, 42, 120, 180, 360),
+  minor_breaks = NULL)
+supp_fig_5C
+ggsave("./figures/supp_fig_5C.pdf", supp_fig_5C, width = 5, height = 3)
+
+```
 supp_fig_5C
 ggsave("./figures/supp_fig_5C.pdf", supp_fig_5C, width = 4, height = 3)
+
 ```
